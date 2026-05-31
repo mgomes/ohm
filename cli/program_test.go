@@ -61,3 +61,24 @@ func TestProgramRunPrintsHelp(t *testing.T) {
 		t.Errorf("Program.Run(%v) stdout = %q, want routes command", []string{"help"}, stdout.String())
 	}
 }
+
+func TestProgramRunPrintsCommandHelpWithFlagPackageHelpArg(t *testing.T) {
+	var stdout bytes.Buffer
+	program := New("myapp", []Command{{
+		Name:    "server",
+		Summary: "start server",
+		Usage:   "server [-addr :3000]",
+		Run: func(context.Context, IO, []string) error {
+			t.Fatalf("command runner called for help argument")
+			return nil
+		},
+	}}, WithIO(IO{Stdout: &stdout}))
+
+	err := program.Run(context.Background(), []string{"server", "-help"})
+	if err != nil {
+		t.Fatalf("Program.Run(%v) error = %v, want nil", []string{"server", "-help"}, err)
+	}
+	if !strings.Contains(stdout.String(), "Usage: myapp server [-addr :3000]") {
+		t.Errorf("Program.Run(%v) stdout = %q, want command usage", []string{"server", "-help"}, stdout.String())
+	}
+}

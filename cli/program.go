@@ -102,7 +102,7 @@ func (p *Program) Run(ctx context.Context, args []string) error {
 	}
 
 	commandName := args[0]
-	if commandName == "help" || commandName == "-h" || commandName == "--help" {
+	if isHelpArg(commandName) || commandName == "help" {
 		p.writeHelp(commandIO.Stdout)
 		return nil
 	}
@@ -115,7 +115,7 @@ func (p *Program) Run(ctx context.Context, args []string) error {
 	}
 
 	commandArgs := args[1:]
-	if len(commandArgs) > 0 && (commandArgs[0] == "-h" || commandArgs[0] == "--help") {
+	if len(commandArgs) > 0 && isHelpArg(commandArgs[0]) {
 		writeCommandHelp(commandIO.Stdout, p.name, command)
 		return nil
 	}
@@ -161,4 +161,8 @@ func writeCommandHelp(w io.Writer, programName string, command Command) {
 	if command.Summary != "" {
 		fmt.Fprintf(w, "\n%s\n", command.Summary)
 	}
+}
+
+func isHelpArg(arg string) bool {
+	return arg == "-h" || arg == "-help" || arg == "--help"
 }
