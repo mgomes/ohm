@@ -98,3 +98,33 @@ func TestRequestLoggerStoresRequestIDInContext(t *testing.T) {
 		t.Errorf("App.ServeHTTP(%s %s) response request id = %q, want %q", request.Method, request.URL.Path, res.Header().Get(RequestIDHeader), res.Body.String())
 	}
 }
+
+func TestRequestLoggerPreservesOptionalResponseWriterInterfaces(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	app := New()
+	app.Use(RequestLogger(logger))
+	app.Get("/stream", func(req *Request) error {
+		flusher, ok := req.ResponseWriter().(http.Flusher)
+		if !ok {
+			t.Errorf("req.ResponseWriter() does not implement http.Flusher")
+			return nil
+		}
+		req.PlainText(http.StatusOK, "stream")
+		flusher.Flush()
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if !res.Flushed {
+		t.Errorf("App.ServeHTTP(%s %s) flushed = false, want true", request.Method, request.URL.Path)
+	}
+}

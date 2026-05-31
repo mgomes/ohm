@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -40,16 +41,14 @@ func RequestLogger(logger *slog.Logger) Middleware {
 			r = r.WithContext(ctx)
 			w.Header().Set(RequestIDHeader, requestID)
 
-			start := time.Now()
-			recorder := newResponseRecorder(w)
-			next.ServeHTTP(recorder, r)
+			metrics := httpsnoop.CaptureMetrics(next, w, r)
 
 			attrs := []slog.Attr{
 				slog.String("request_id", requestID),
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
-				slog.Int("status", recorder.Status()),
-				slog.Duration("duration", time.Since(start)),
+				slog.Int("status", metrics.Code),
+				slog.Duration("duration", metrics.Duration),
 				slog.String("remote_addr", r.RemoteAddr),
 				slog.String("user_agent", r.UserAgent()),
 				slog.Int64("content_length", r.ContentLength),
