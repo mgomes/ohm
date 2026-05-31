@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 )
@@ -81,6 +82,7 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 
 			server := &http.Server{
 				Addr:              *addr,
+				BaseContext:       requestBaseContext(ctx),
 				Handler:           handler,
 				ReadHeaderTimeout: 5 * time.Second,
 			}
@@ -99,6 +101,9 @@ func RunHTTPServer(ctx context.Context, server *http.Server, shutdownTimeout tim
 	}
 	if shutdownTimeout <= 0 {
 		shutdownTimeout = defaultShutdownTimeout
+	}
+	if server.BaseContext == nil {
+		server.BaseContext = requestBaseContext(ctx)
 	}
 
 	errCh := make(chan error, 1)
@@ -123,5 +128,14 @@ func RunHTTPServer(ctx context.Context, server *http.Server, shutdownTimeout tim
 			return err
 		}
 		return nil
+	}
+}
+
+func requestBaseContext(ctx context.Context) func(net.Listener) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return func(net.Listener) context.Context {
+		return ctx
 	}
 }
