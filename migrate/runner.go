@@ -22,6 +22,9 @@ const (
 	DialectSQLite Dialect = "sqlite"
 )
 
+// ErrUnsupportedDialect reports that a migration dialect is not supported.
+var ErrUnsupportedDialect = errors.New("unsupported migration dialect")
+
 // Result describes one applied migration.
 type Result struct {
 	Version   int64
@@ -81,6 +84,11 @@ func New(db *sql.DB, dialect Dialect, migrations fs.FS, opts ...Option) (*GooseR
 		opt(&cfg)
 	}
 
+	dialectName, err := gooseDialect(dialect)
+	if err != nil {
+		return nil, err
+	}
+
 	providerOpts := []goose.ProviderOption{
 		goose.WithDisableGlobalRegistry(true),
 	}
@@ -88,7 +96,7 @@ func New(db *sql.DB, dialect Dialect, migrations fs.FS, opts ...Option) (*GooseR
 		providerOpts = append(providerOpts, goose.WithTableName(cfg.tableName))
 	}
 
-	provider, err := goose.NewProvider(gooseDialect(dialect), db, migrations, providerOpts...)
+	provider, err := goose.NewProvider(dialectName, db, migrations, providerOpts...)
 	if err != nil {
 		if errors.Is(err, goose.ErrNoMigrations) {
 			return &GooseRunner{}, nil
@@ -165,14 +173,14 @@ func (r *GooseRunner) validate() error {
 	return nil
 }
 
-func gooseDialect(dialect Dialect) goose.Dialect {
+func gooseDialect(dialect Dialect) (goose.Dialect, error) {
 	switch dialect {
 	case DialectPostgres:
-		return goose.DialectPostgres
+		return goose.DialectPostgres, nil
 	case DialectSQLite:
-		return goose.DialectSQLite3
+		return goose.DialectSQLite3, nil
 	default:
-		return goose.Dialect(dialect)
+		return "", fmt.Errorf("%w: %q", ErrUnsupportedDialect, dialect)
 	}
 }
 

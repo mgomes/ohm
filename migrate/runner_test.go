@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"testing/fstest"
 )
@@ -16,6 +17,11 @@ func TestNewValidatesInputs(t *testing.T) {
 	_, err = New(&sql.DB{}, DialectPostgres, nil)
 	if err == nil {
 		t.Fatalf("New(db, %q, nil) error = nil, want non-nil", DialectPostgres)
+	}
+
+	_, err = New(&sql.DB{}, "", fstest.MapFS{})
+	if !errors.Is(err, ErrUnsupportedDialect) {
+		t.Fatalf("New(db, %q, fs) error = %v, want ErrUnsupportedDialect", "", err)
 	}
 }
 
@@ -54,15 +60,23 @@ func TestGooseDialect(t *testing.T) {
 	tests := []struct {
 		dialect Dialect
 		want    string
+		wantErr bool
 	}{
 		{dialect: DialectPostgres, want: "postgres"},
 		{dialect: DialectSQLite, want: "sqlite3"},
-		{dialect: Dialect("mysql"), want: "mysql"},
+		{dialect: "", wantErr: true},
+		{dialect: Dialect("mysql"), wantErr: true},
 	}
 
 	for _, tt := range tests {
-		got := string(gooseDialect(tt.dialect))
-		if got != tt.want {
+		got, err := gooseDialect(tt.dialect)
+		if gotErr := err != nil; gotErr != tt.wantErr {
+			t.Errorf("gooseDialect(%q) error = %v, want error presence = %t", tt.dialect, err, tt.wantErr)
+		}
+		if tt.wantErr {
+			continue
+		}
+		if string(got) != tt.want {
 			t.Errorf("gooseDialect(%q) = %q, want %q", tt.dialect, got, tt.want)
 		}
 	}
