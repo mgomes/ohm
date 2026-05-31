@@ -63,6 +63,25 @@ func TestAppDefaultErrorHandlerRendersHTTPError(t *testing.T) {
 	}
 }
 
+func TestAppDefaultErrorHandlerDoesNotExposeWrappedInternalError(t *testing.T) {
+	app := New()
+	app.Get("/error", func(req *Request) error {
+		return NewHTTPError(http.StatusInternalServerError, "", errors.New("database password leaked"))
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/error", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusInternalServerError)
+	}
+	if res.Body.String() != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), http.StatusText(http.StatusInternalServerError))
+	}
+}
+
 func TestRequestNoContentRendersNoContent(t *testing.T) {
 	app := New()
 	app.Delete("/posts/{id}", func(req *Request) error {

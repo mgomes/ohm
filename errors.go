@@ -47,7 +47,10 @@ func DefaultErrorHandler(req *Request, err error) {
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
 		status = httpErr.responseStatus()
-		message = httpErr.Error()
+		message = http.StatusText(status)
+		if httpErr.Message != "" {
+			message = httpErr.Message
+		}
 	}
 
 	render.Status(req.HTTPRequest(), status)
