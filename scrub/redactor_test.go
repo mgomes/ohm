@@ -254,3 +254,18 @@ func TestHandlerRedactsWithAttrs(t *testing.T) {
 		t.Errorf("logged session_id = %v, want %v", got["session_id"], defaultReplacement)
 	}
 }
+
+func TestHandlerRedactsSensitiveGroups(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewTextHandler(&buf, nil))).WithGroup("password")
+
+	logger.Info("request", slog.String("value", "secret"))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+	if !strings.Contains(output, "password.value=[REDACTED]") {
+		t.Errorf("logged output %q contains password.value=[REDACTED], want true", output)
+	}
+}
