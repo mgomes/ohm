@@ -45,8 +45,8 @@ func TestNewAllowsEmptyMigrationSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runner.Down(ctx) error = %v, want nil", err)
 	}
-	if !downResult.Empty {
-		t.Errorf("runner.Down(ctx) Empty = %t, want true", downResult.Empty)
+	if !downResult.Skipped {
+		t.Errorf("runner.Down(ctx) Skipped = %t, want true", downResult.Skipped)
 	}
 }
 

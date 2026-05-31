@@ -49,9 +49,9 @@ func TestCommandRunsDown(t *testing.T) {
 	}
 }
 
-func TestCommandReportsEmptyDown(t *testing.T) {
+func TestCommandReportsSkippedDown(t *testing.T) {
 	runner := &fakeRunner{
-		downResult: Result{Empty: true},
+		downResult: Result{Skipped: true},
 	}
 	var stdout bytes.Buffer
 	command := Command(runner)
@@ -62,6 +62,24 @@ func TestCommandReportsEmptyDown(t *testing.T) {
 	}
 
 	want := "No migrations to roll back.\n"
+	if stdout.String() != want {
+		t.Errorf("Command(runner).Run(ctx, io, %v) stdout = %q, want %q", []string{"down"}, stdout.String(), want)
+	}
+}
+
+func TestCommandReportsEmptyMigrationBodyRollback(t *testing.T) {
+	runner := &fakeRunner{
+		downResult: Result{Version: 1, Source: "001_create_users.sql", Empty: true},
+	}
+	var stdout bytes.Buffer
+	command := Command(runner)
+
+	err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"down"})
+	if err != nil {
+		t.Fatalf("Command(runner).Run(ctx, io, %v) error = %v, want nil", []string{"down"}, err)
+	}
+
+	want := "Rolled back 1 001_create_users.sql\n"
 	if stdout.String() != want {
 		t.Errorf("Command(runner).Run(ctx, io, %v) stdout = %q, want %q", []string{"down"}, stdout.String(), want)
 	}

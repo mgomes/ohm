@@ -29,6 +29,7 @@ type Result struct {
 	Direction string
 	Duration  time.Duration
 	Empty     bool
+	Skipped   bool
 }
 
 // Status describes one migration status row.
@@ -128,11 +129,14 @@ func (r *GooseRunner) Down(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 	if r.provider == nil {
-		return Result{Empty: true}, nil
+		return Result{Skipped: true}, nil
 	}
 
 	result, err := r.provider.Down(ctx)
 	if err != nil {
+		if errors.Is(err, goose.ErrNoNextVersion) {
+			return Result{Skipped: true}, nil
+		}
 		return Result{}, fmt.Errorf("migrate down: %w", err)
 	}
 	return migrationResult(result), nil
