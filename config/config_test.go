@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -124,6 +125,24 @@ func TestLoadUsesOHMEnvForDefaultFileOrder(t *testing.T) {
 
 	if got.Name != "test" {
 		t.Errorf("Load[appConfig]() Name = %q, want %q", got.Name, "test")
+	}
+}
+
+func TestSecretMarshalJSONRedactsNestedValues(t *testing.T) {
+	input := struct {
+		DatabaseURL Secret
+	}{
+		DatabaseURL: Secret("postgres://localhost/ohm"),
+	}
+
+	got, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("json.Marshal(%+v) error = %v, want nil", input, err)
+	}
+
+	want := `{"DatabaseURL":"[REDACTED]"}`
+	if string(got) != want {
+		t.Errorf("json.Marshal(%+v) = %s, want %s", input, got, want)
 	}
 }
 

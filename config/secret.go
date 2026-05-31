@@ -1,6 +1,9 @@
 package config
 
-import "log/slog"
+import (
+	"encoding/json"
+	"log/slog"
+)
 
 const secretReplacement = "[REDACTED]"
 
@@ -22,6 +25,11 @@ func (s Secret) String() string {
 // LogValue returns a redacted slog value.
 func (s Secret) LogValue() slog.Value {
 	return slog.StringValue(s.String())
+}
+
+// MarshalJSON returns a redacted JSON string.
+func (s Secret) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
 }
 
 // UnmarshalText stores text as a secret value.
