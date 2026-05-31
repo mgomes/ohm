@@ -122,6 +122,9 @@ func RunHTTPServer(ctx context.Context, server *http.Server, shutdownTimeout tim
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
+			if closeErr := server.Close(); closeErr != nil {
+				return fmt.Errorf("shutdown server: %w", errors.Join(err, closeErr))
+			}
 			return fmt.Errorf("shutdown server: %w", err)
 		}
 		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -135,6 +138,7 @@ func requestBaseContext(ctx context.Context) func(net.Listener) context.Context 
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = context.WithoutCancel(ctx)
 	return func(net.Listener) context.Context {
 		return ctx
 	}

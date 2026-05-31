@@ -33,13 +33,21 @@ func TestServerCommandBuildsHTTPServer(t *testing.T) {
 func TestServerCommandSetsRequestBaseContext(t *testing.T) {
 	type contextKey struct{}
 
-	ctx := context.WithValue(context.Background(), contextKey{}, "request")
+	parent := context.WithValue(context.Background(), contextKey{}, "request")
+	ctx, cancel := context.WithCancel(parent)
 	command := ServerCommand(&testHandler{}, WithServerRunner(func(_ context.Context, server *http.Server, _ time.Duration) error {
 		if server.BaseContext == nil {
 			t.Fatalf("ServerCommand(handler).Run(ctx, io, args) server BaseContext = nil, want non-nil")
 		}
-		if got := server.BaseContext(nil).Value(contextKey{}); got != "request" {
+		requestCtx := server.BaseContext(nil)
+		if got := requestCtx.Value(contextKey{}); got != "request" {
 			t.Errorf("ServerCommand(handler).Run(ctx, io, args) request context value = %v, want %v", got, "request")
+		}
+		cancel()
+		select {
+		case <-requestCtx.Done():
+			t.Errorf("ServerCommand(handler).Run(ctx, io, args) request context canceled = true, want false")
+		default:
 		}
 		return nil
 	}))
@@ -72,17 +80,25 @@ func TestRunHTTPServerRequiresServer(t *testing.T) {
 func TestRunHTTPServerSetsRequestBaseContext(t *testing.T) {
 	type contextKey struct{}
 
-	ctx := context.WithValue(context.Background(), contextKey{}, "request")
+	parent := context.WithValue(context.Background(), contextKey{}, "request")
+	ctx, cancel := context.WithCancel(parent)
 	server := &http.Server{Addr: "127.0.0.1:invalid"}
 
 	err := RunHTTPServer(ctx, server, time.Second)
+	cancel()
 	if err == nil {
 		t.Fatalf("RunHTTPServer(ctx, server, timeout) error = nil, want non-nil")
 	}
 	if server.BaseContext == nil {
 		t.Fatalf("RunHTTPServer(ctx, server, timeout) server BaseContext = nil, want non-nil")
 	}
-	if got := server.BaseContext(nil).Value(contextKey{}); got != "request" {
+	requestCtx := server.BaseContext(nil)
+	if got := requestCtx.Value(contextKey{}); got != "request" {
 		t.Errorf("RunHTTPServer(ctx, server, timeout) request context value = %v, want %v", got, "request")
+	}
+	select {
+	case <-requestCtx.Done():
+		t.Errorf("RunHTTPServer(ctx, server, timeout) request context canceled = true, want false")
+	default:
 	}
 }
