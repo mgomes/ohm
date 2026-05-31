@@ -1,6 +1,8 @@
 package scrub
 
 import (
+	"encoding"
+	"encoding/json"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -250,6 +252,9 @@ func (r *Redactor) reflectValue(reflected reflect.Value) (any, bool) {
 		}
 		return out, true
 	case reflect.Struct:
+		if usesOwnEncoding(reflected) {
+			return valueFromReflect(reflected), false
+		}
 		return r.structAny(reflected)
 	default:
 		return valueFromReflect(reflected), false
@@ -264,6 +269,7 @@ func (r *Redactor) structAny(reflected reflect.Value) (any, bool) {
 	for i := range reflected.NumField() {
 		field := reflectedType.Field(i)
 		if !field.IsExported() {
+			changed = true
 			continue
 		}
 
@@ -282,6 +288,22 @@ func (r *Redactor) structAny(reflected reflect.Value) (any, bool) {
 		return valueFromReflect(reflected), false
 	}
 	return out, true
+}
+
+func usesOwnEncoding(value reflect.Value) bool {
+	if value.CanInterface() && implementsEncoding(value.Interface()) {
+		return true
+	}
+	if value.CanAddr() && value.Addr().CanInterface() {
+		return implementsEncoding(value.Addr().Interface())
+	}
+	return false
+}
+
+func implementsEncoding(value any) bool {
+	_, jsonMarshaler := value.(json.Marshaler)
+	_, textMarshaler := value.(encoding.TextMarshaler)
+	return jsonMarshaler || textMarshaler
 }
 
 func fieldKey(field reflect.StructField) (string, bool) {

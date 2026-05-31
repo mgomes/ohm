@@ -235,6 +235,29 @@ func TestHandlerOmitsJSONSkippedStructFields(t *testing.T) {
 	}
 }
 
+func TestHandlerOmitsUnexportedStructFields(t *testing.T) {
+	type credentials struct {
+		Username string
+		password string
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewTextHandler(&buf, nil)))
+
+	logger.Info("request", slog.Any("credentials", credentials{
+		Username: "ada",
+		password: "secret",
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+	if !strings.Contains(output, "Username:ada") {
+		t.Errorf("logged output %q contains Username:ada, want true", output)
+	}
+}
+
 func TestHandlerRedactsWithAttrs(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil))).With("session_id", "abc123")
