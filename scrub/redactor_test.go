@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSensitiveKeyMatchesCommonStyles(t *testing.T) {
@@ -83,6 +84,49 @@ func TestAnyRedactsNestedMapsAndMarkedValues(t *testing.T) {
 	}
 }
 
+func TestAnyRedactsNestedStructFields(t *testing.T) {
+	type databaseConfig struct {
+		DSN      string
+		Password string
+	}
+	type appConfig struct {
+		Name      string
+		Database  *databaseConfig `json:"database"`
+		CreatedAt time.Time       `json:"created_at"`
+		ignored   string
+	}
+
+	redactor := New()
+	input := appConfig{
+		Name: "admin",
+		Database: &databaseConfig{
+			DSN:      "postgres://localhost/app",
+			Password: "secret",
+		},
+		CreatedAt: time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC),
+		ignored:   "private field",
+	}
+
+	got := redactor.Any("", input).(map[string]any)
+
+	if got["Name"] != "admin" {
+		t.Errorf("Redactor.Any(%q, input)[Name] = %v, want %v", "", got["Name"], "admin")
+	}
+	database := got["database"].(map[string]any)
+	if database["DSN"] != "postgres://localhost/app" {
+		t.Errorf("Redactor.Any(%q, input)[database][DSN] = %v, want %v", "", database["DSN"], "postgres://localhost/app")
+	}
+	if database["Password"] != defaultReplacement {
+		t.Errorf("Redactor.Any(%q, input)[database][Password] = %v, want %v", "", database["Password"], defaultReplacement)
+	}
+	if got["created_at"] != input.CreatedAt {
+		t.Errorf("Redactor.Any(%q, input)[created_at] = %v, want %v", "", got["created_at"], input.CreatedAt)
+	}
+	if _, ok := got["ignored"]; ok {
+		t.Errorf("Redactor.Any(%q, input)[ignored] present = %t, want false", "", ok)
+	}
+}
+
 func TestHandlerRedactsSlogOutput(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
@@ -125,6 +169,46 @@ func TestHandlerRedactsSlogOutput(t *testing.T) {
 	headers := got["headers"].(map[string]any)
 	if headers["Cookie"] != defaultReplacement {
 		t.Errorf("logged headers.Cookie = %v, want %v", headers["Cookie"], defaultReplacement)
+	}
+}
+
+func TestHandlerRedactsStructFields(t *testing.T) {
+	type credentials struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Token    string
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Info("request", slog.Any("credentials", credentials{
+		Username: "ada",
+		Password: "secret",
+		Token:    "token",
+	}))
+
+	output := buf.String()
+	for _, leaked := range []string{"secret", "token"} {
+		if strings.Contains(output, leaked) {
+			t.Errorf("logged output %q contains sensitive value %q", output, leaked)
+		}
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+
+	credentialsLog := got["credentials"].(map[string]any)
+	if credentialsLog["username"] != "ada" {
+		t.Errorf("logged credentials.username = %v, want %v", credentialsLog["username"], "ada")
+	}
+	if credentialsLog["password"] != defaultReplacement {
+		t.Errorf("logged credentials.password = %v, want %v", credentialsLog["password"], defaultReplacement)
+	}
+	if credentialsLog["Token"] != defaultReplacement {
+		t.Errorf("logged credentials.Token = %v, want %v", credentialsLog["Token"], defaultReplacement)
 	}
 }
 

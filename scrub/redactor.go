@@ -116,31 +116,42 @@ func (r *Redactor) Attr(attr slog.Attr) slog.Attr {
 
 // Any returns a scrubbed copy of value when the value is a supported structured type.
 func (r *Redactor) Any(key string, value any) any {
+	redacted, _ := r.any(key, value)
+	return redacted
+}
+
+func (r *Redactor) any(key string, value any) (any, bool) {
 	if r.SensitiveKey(key) {
-		return r.replacementValue()
+		return r.replacementValue(), true
 	}
 
 	switch value := value.(type) {
 	case nil:
-		return nil
+		return nil, false
 	case Sensitive:
-		return r.replacementValue()
+		return r.replacementValue(), true
 	case slog.Attr:
-		return r.Attr(value)
+		return r.Attr(value), true
 	case []slog.Attr:
 		attrs := make([]slog.Attr, 0, len(value))
 		for _, attr := range value {
 			attrs = append(attrs, r.Attr(attr))
 		}
-		return attrs
+		return attrs, true
 	case map[string]any:
 		return r.mapAny(value)
 	case map[string]string:
 		out := make(map[string]any, len(value))
+		changed := false
 		for childKey, childValue := range value {
-			out[childKey] = r.Any(childKey, childValue)
+			redacted, childChanged := r.any(childKey, childValue)
+			out[childKey] = redacted
+			changed = changed || childChanged
 		}
-		return out
+		if !changed {
+			return value, false
+		}
+		return out, true
 	}
 
 	return r.reflectAny(value)
@@ -174,40 +185,114 @@ func (r *Redactor) replacementValue() string {
 	return r.replacement
 }
 
-func (r *Redactor) mapAny(value map[string]any) map[string]any {
+func (r *Redactor) mapAny(value map[string]any) (any, bool) {
 	out := make(map[string]any, len(value))
+	changed := false
 	for key, childValue := range value {
-		out[key] = r.Any(key, childValue)
+		redacted, childChanged := r.any(key, childValue)
+		out[key] = redacted
+		changed = changed || childChanged
 	}
-	return out
+	if !changed {
+		return value, false
+	}
+	return out, true
 }
 
-func (r *Redactor) reflectAny(value any) any {
+func (r *Redactor) reflectAny(value any) (any, bool) {
 	reflected := reflect.ValueOf(value)
 	if !reflected.IsValid() {
-		return value
+		return value, false
+	}
+	return r.reflectValue(reflected)
+}
+
+func (r *Redactor) reflectValue(reflected reflect.Value) (any, bool) {
+	for reflected.Kind() == reflect.Interface || reflected.Kind() == reflect.Pointer {
+		if reflected.IsNil() {
+			return valueFromReflect(reflected), false
+		}
+		redacted, changed := r.reflectValue(reflected.Elem())
+		if changed {
+			return redacted, true
+		}
+		return valueFromReflect(reflected), false
 	}
 
 	switch reflected.Kind() {
 	case reflect.Map:
 		if reflected.Type().Key().Kind() != reflect.String {
-			return value
+			return valueFromReflect(reflected), false
 		}
 		out := make(map[string]any, reflected.Len())
+		changed := false
 		iter := reflected.MapRange()
 		for iter.Next() {
 			key := iter.Key().String()
-			out[key] = r.Any(key, valueFromReflect(iter.Value()))
+			redacted, childChanged := r.any(key, valueFromReflect(iter.Value()))
+			out[key] = redacted
+			changed = changed || childChanged
 		}
-		return out
+		if !changed {
+			return valueFromReflect(reflected), false
+		}
+		return out, true
 	case reflect.Slice, reflect.Array:
 		out := make([]any, 0, reflected.Len())
+		changed := false
 		for i := range reflected.Len() {
-			out = append(out, r.Any("", valueFromReflect(reflected.Index(i))))
+			redacted, childChanged := r.any("", valueFromReflect(reflected.Index(i)))
+			out = append(out, redacted)
+			changed = changed || childChanged
 		}
-		return out
+		if !changed {
+			return valueFromReflect(reflected), false
+		}
+		return out, true
+	case reflect.Struct:
+		return r.structAny(reflected)
 	default:
-		return value
+		return valueFromReflect(reflected), false
+	}
+}
+
+func (r *Redactor) structAny(reflected reflect.Value) (any, bool) {
+	reflectedType := reflected.Type()
+	out := make(map[string]any, reflected.NumField())
+	changed := false
+
+	for i := range reflected.NumField() {
+		field := reflectedType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		key, ok := fieldKey(field)
+		if !ok {
+			continue
+		}
+
+		redacted, fieldChanged := r.any(key, valueFromReflect(reflected.Field(i)))
+		out[key] = redacted
+		changed = changed || fieldChanged
+	}
+
+	if !changed {
+		return valueFromReflect(reflected), false
+	}
+	return out, true
+}
+
+func fieldKey(field reflect.StructField) (string, bool) {
+	tag := field.Tag.Get("json")
+	name, _, _ := strings.Cut(tag, ",")
+	switch name {
+	case "-":
+		return "", false
+	case "":
+		return field.Name, true
+	default:
+		return name, true
 	}
 }
 
