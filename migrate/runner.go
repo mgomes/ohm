@@ -64,7 +64,8 @@ func WithTableName(tableName string) Option {
 	}
 }
 
-// New creates a goose-backed migration runner.
+// New creates a goose-backed migration runner. The caller owns db and remains
+// responsible for closing it.
 func New(db *sql.DB, dialect Dialect, migrations fs.FS, opts ...Option) (*GooseRunner, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database is required")
@@ -126,11 +127,6 @@ func (r *GooseRunner) Status(ctx context.Context) ([]Status, error) {
 		return nil, fmt.Errorf("migration status: %w", err)
 	}
 	return migrationStatuses(statuses), nil
-}
-
-// Close closes the underlying goose provider.
-func (r *GooseRunner) Close() error {
-	return r.provider.Close()
 }
 
 func gooseDialect(dialect Dialect) goose.Dialect {
