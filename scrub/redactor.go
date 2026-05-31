@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -27,6 +28,8 @@ var defaultKeys = []string{
 }
 
 var normalizedDefaultKeys = normalizedKeys(defaultKeys...)
+
+var timeType = reflect.TypeOf(time.Time{})
 
 // Option configures a Redactor.
 type Option func(*Redactor)
@@ -252,16 +255,16 @@ func (r *Redactor) reflectValue(reflected reflect.Value) (any, bool) {
 		}
 		return out, true
 	case reflect.Struct:
-		if usesOwnEncoding(reflected) {
+		if usesSafeEncoding(reflected) {
 			return valueFromReflect(reflected), false
 		}
-		return r.structAny(reflected)
+		return r.structAny(reflected, usesOwnEncoding(reflected))
 	default:
 		return valueFromReflect(reflected), false
 	}
 }
 
-func (r *Redactor) structAny(reflected reflect.Value) (any, bool) {
+func (r *Redactor) structAny(reflected reflect.Value, forceMap bool) (any, bool) {
 	reflectedType := reflected.Type()
 	out := make(map[string]any, reflected.NumField())
 	changed := false
@@ -284,10 +287,14 @@ func (r *Redactor) structAny(reflected reflect.Value) (any, bool) {
 		changed = changed || fieldChanged
 	}
 
-	if !changed {
+	if !changed && !forceMap {
 		return valueFromReflect(reflected), false
 	}
 	return out, true
+}
+
+func usesSafeEncoding(value reflect.Value) bool {
+	return value.Type() == timeType
 }
 
 func usesOwnEncoding(value reflect.Value) bool {

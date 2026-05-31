@@ -10,6 +10,25 @@ import (
 	"time"
 )
 
+type customEncodedCredentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (c customEncodedCredentials) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}{
+		Username: c.Username,
+		Password: c.Password,
+	})
+}
+
+func (c customEncodedCredentials) MarshalText() ([]byte, error) {
+	return []byte(c.Username + ":" + c.Password), nil
+}
+
 func TestSensitiveKeyMatchesCommonStyles(t *testing.T) {
 	redactor := New()
 	tests := []struct {
@@ -209,6 +228,52 @@ func TestHandlerRedactsStructFields(t *testing.T) {
 	}
 	if credentialsLog["Token"] != defaultReplacement {
 		t.Errorf("logged credentials.Token = %v, want %v", credentialsLog["Token"], defaultReplacement)
+	}
+}
+
+func TestHandlerRedactsCustomEncodedStructFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Info("request", slog.Any("credentials", customEncodedCredentials{
+		Username: "ada",
+		Password: "secret",
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+
+	credentialsLog := got["credentials"].(map[string]any)
+	if credentialsLog["username"] != "ada" {
+		t.Errorf("logged credentials.username = %v, want %v", credentialsLog["username"], "ada")
+	}
+	if credentialsLog["password"] != defaultReplacement {
+		t.Errorf("logged credentials.password = %v, want %v", credentialsLog["password"], defaultReplacement)
+	}
+}
+
+func TestHandlerRedactsCustomTextEncodedStructFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewTextHandler(&buf, nil)))
+
+	logger.Info("request", slog.Any("credentials", customEncodedCredentials{
+		Username: "ada",
+		Password: "secret",
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+	if !strings.Contains(output, "password:[REDACTED]") {
+		t.Errorf("logged output %q contains password:[REDACTED], want true", output)
 	}
 }
 
