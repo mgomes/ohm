@@ -49,6 +49,24 @@ func TestCommandRunsDown(t *testing.T) {
 	}
 }
 
+func TestCommandReportsEmptyDown(t *testing.T) {
+	runner := &fakeRunner{
+		downResult: Result{Empty: true},
+	}
+	var stdout bytes.Buffer
+	command := Command(runner)
+
+	err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"down"})
+	if err != nil {
+		t.Fatalf("Command(runner).Run(ctx, io, %v) error = %v, want nil", []string{"down"}, err)
+	}
+
+	want := "No migrations to roll back.\n"
+	if stdout.String() != want {
+		t.Errorf("Command(runner).Run(ctx, io, %v) stdout = %q, want %q", []string{"down"}, stdout.String(), want)
+	}
+}
+
 func TestCommandRunsStatus(t *testing.T) {
 	runner := &fakeRunner{
 		statuses: []Status{

@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -88,6 +89,9 @@ func New(db *sql.DB, dialect Dialect, migrations fs.FS, opts ...Option) (*GooseR
 
 	provider, err := goose.NewProvider(gooseDialect(dialect), db, migrations, providerOpts...)
 	if err != nil {
+		if errors.Is(err, goose.ErrNoMigrations) {
+			return &GooseRunner{}, nil
+		}
 		return nil, fmt.Errorf("create migration provider: %w", err)
 	}
 
@@ -104,6 +108,13 @@ func NewFromDir(db *sql.DB, dialect Dialect, dir string, opts ...Option) (*Goose
 
 // Up applies all pending migrations.
 func (r *GooseRunner) Up(ctx context.Context) ([]Result, error) {
+	if err := r.validate(); err != nil {
+		return nil, err
+	}
+	if r.provider == nil {
+		return nil, nil
+	}
+
 	results, err := r.provider.Up(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("migrate up: %w", err)
@@ -113,6 +124,13 @@ func (r *GooseRunner) Up(ctx context.Context) ([]Result, error) {
 
 // Down rolls back one migration.
 func (r *GooseRunner) Down(ctx context.Context) (Result, error) {
+	if err := r.validate(); err != nil {
+		return Result{}, err
+	}
+	if r.provider == nil {
+		return Result{Empty: true}, nil
+	}
+
 	result, err := r.provider.Down(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("migrate down: %w", err)
@@ -122,11 +140,25 @@ func (r *GooseRunner) Down(ctx context.Context) (Result, error) {
 
 // Status returns migration state.
 func (r *GooseRunner) Status(ctx context.Context) ([]Status, error) {
+	if err := r.validate(); err != nil {
+		return nil, err
+	}
+	if r.provider == nil {
+		return nil, nil
+	}
+
 	statuses, err := r.provider.Status(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("migration status: %w", err)
 	}
 	return migrationStatuses(statuses), nil
+}
+
+func (r *GooseRunner) validate() error {
+	if r == nil {
+		return fmt.Errorf("migration runner is required")
+	}
+	return nil
 }
 
 func gooseDialect(dialect Dialect) goose.Dialect {

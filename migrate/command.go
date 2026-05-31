@@ -59,6 +59,10 @@ func runDown(ctx context.Context, io cli.IO, runner Runner) error {
 	if err != nil {
 		return err
 	}
+	if result.Empty {
+		fmt.Fprintln(stdout, "No migrations to roll back.")
+		return nil
+	}
 	fmt.Fprintf(stdout, "Rolled back %d %s\n", result.Version, result.Source)
 	return nil
 }
