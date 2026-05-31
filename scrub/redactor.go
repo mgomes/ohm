@@ -269,6 +269,7 @@ func (r *Redactor) structAny(reflected reflect.Value) (any, bool) {
 
 		key, ok := fieldKey(field)
 		if !ok {
+			changed = true
 			continue
 		}
 
