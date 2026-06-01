@@ -301,6 +301,75 @@ func TestConfigLoadsDatabaseURL(t *testing.T) {
 	}
 }
 `,
+	"internal/db/migrate_test.go": `package db
+
+import (
+{{- if .IsSQLite }}
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+{{- end }}
+	"testing"
+{{- if .IsSQLite }}
+
+	"github.com/mgomes/ohm/cli"
+{{- end }}
+)
+
+func TestMigrateCommandRunsAgainstTestDatabase(t *testing.T) {
+{{- if .IsSQLite }}
+	t.Chdir(projectRoot(t))
+
+	databaseURL := "file:" + filepath.Join(t.TempDir(), "migrate.db")
+	t.Setenv("DATABASE_URL", databaseURL)
+
+	command := MigrateCommand()
+	var stdout bytes.Buffer
+	if err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"up"}); err != nil {
+		t.Fatalf("MigrateCommand().Run(ctx, io, %v) error = %v, want nil", []string{"up"}, err)
+	}
+	if got := stdout.String(); got != "No pending migrations.\n" {
+		t.Errorf("MigrateCommand().Run(ctx, io, %v) stdout = %q, want no pending migrations", []string{"up"}, got)
+	}
+
+	stdout.Reset()
+	if err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"status"}); err != nil {
+		t.Fatalf("MigrateCommand().Run(ctx, io, %v) error = %v, want nil", []string{"status"}, err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "VERSION") || !strings.Contains(got, "STATE") || !strings.Contains(got, "SOURCE") {
+		t.Errorf("MigrateCommand().Run(ctx, io, %v) stdout = %q, want status header", []string{"status"}, got)
+	}
+{{- else }}
+	t.Skip("migration integration test requires a configured Postgres test database")
+{{- end }}
+}
+{{- if .IsSQLite }}
+
+func projectRoot(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd() error = %v, want nil", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("os.Stat(go.mod) in %q error = %v, want nil or not exist", dir, err)
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("project root with go.mod not found from %q", dir)
+		}
+		dir = parent
+	}
+}
+{{- end }}
+`,
 	"internal/db/seeds.go": `package db
 
 import (
