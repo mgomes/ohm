@@ -25,7 +25,9 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"go.mod",
 		"cmd/journal/main.go",
 		"internal/app/app.go",
+		"internal/app/app_test.go",
 		"internal/db/db.go",
+		"internal/db/db_test.go",
 		"internal/db/dbgen/README.md",
 		"internal/handlers/home.go",
 		"internal/handlers/home_test.go",
@@ -33,6 +35,7 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/views/layouts/application.templ",
 		"internal/views/layouts/application_templ.go",
 		"internal/views/pages/home.templ",
+		"internal/views/pages/home_test.go",
 		"internal/views/pages/home_templ.go",
 		"migrations/README.md",
 		"queries/health.sql",
@@ -60,6 +63,11 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	dbFile := readFile(t, filepath.Join(destination, "internal", "db", "db.go"))
 	if !strings.Contains(dbFile, `default:"file:development.db"`) {
 		t.Errorf("GenerateApp(sqlite app) internal/db/db.go = %q, want sqlite default database URL", dbFile)
+	}
+
+	dbTest := readFile(t, filepath.Join(destination, "internal", "db", "db_test.go"))
+	if !strings.Contains(dbTest, `t.Setenv("DATABASE_URL", "file:test.db")`) {
+		t.Errorf("GenerateApp(sqlite app) internal/db/db_test.go = %q, want test database URL", dbTest)
 	}
 
 	justfile := readFile(t, filepath.Join(destination, "justfile"))
@@ -122,6 +130,16 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(homeView, `@layouts.Application(title)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/pages/home.templ = %q, want application layout", homeView)
 	}
+
+	appTest := readFile(t, filepath.Join(destination, "internal", "app", "app_test.go"))
+	if !strings.Contains(appTest, `hasRoute(routes, "GET", "/")`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app_test.go = %q, want home route smoke test", appTest)
+	}
+
+	viewTest := readFile(t, filepath.Join(destination, "internal", "views", "pages", "home_test.go"))
+	if !strings.Contains(viewTest, `<h1>Welcome to Journal</h1>`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/pages/home_test.go = %q, want rendered view assertion", viewTest)
+	}
 }
 
 func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
@@ -143,6 +161,11 @@ func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
 	}
 	if !strings.Contains(dbFile, "migrate.DialectPostgres") {
 		t.Errorf("GenerateApp(default app) internal/db/db.go = %q, want Postgres migration dialect", dbFile)
+	}
+
+	dbTest := readFile(t, filepath.Join(destination, "internal", "db", "db_test.go"))
+	if !strings.Contains(dbTest, `t.Setenv("DATABASE_URL", "postgres://localhost/test?sslmode=disable")`) {
+		t.Errorf("GenerateApp(default app) internal/db/db_test.go = %q, want Postgres test database URL", dbTest)
 	}
 
 	sqlcConfig := readFile(t, filepath.Join(destination, "sqlc.yaml"))
