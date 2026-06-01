@@ -72,16 +72,24 @@ func nextMigrationVersion(dir string, now time.Time) (int64, error) {
 	}
 
 	now = now.UTC()
-	version, err := strconv.ParseInt(fmt.Sprintf("%s%03d", now.Format("20060102150405"), now.Nanosecond()/int(time.Millisecond)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("build migration version: %w", err)
-	}
 	for {
+		version, err := migrationVersion(now)
+		if err != nil {
+			return 0, err
+		}
 		if _, ok := used[version]; !ok {
 			return version, nil
 		}
-		version++
+		now = now.Add(time.Second)
 	}
+}
+
+func migrationVersion(t time.Time) (int64, error) {
+	version, err := strconv.ParseInt(t.Format("20060102150405"), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("build migration version: %w", err)
+	}
+	return version, nil
 }
 
 func existingMigrationVersions(dir string) (map[int64]struct{}, error) {

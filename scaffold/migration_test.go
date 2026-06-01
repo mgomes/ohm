@@ -21,7 +21,7 @@ func TestGenerateMigrationWritesTimestampedFile(t *testing.T) {
 		t.Fatalf("GenerateMigration(create_posts) error = %v, want nil", err)
 	}
 
-	wantPath := filepath.Join(dir, "20260601060304000_create_posts.sql")
+	wantPath := filepath.Join(dir, "20260601060304_create_posts.sql")
 	if path != wantPath {
 		t.Errorf("GenerateMigration(create_posts) path = %q, want %q", path, wantPath)
 	}
@@ -50,7 +50,7 @@ func TestGenerateMigrationDoesNotOverwriteExistingFile(t *testing.T) {
 	now := func() time.Time {
 		return time.Date(2026, 6, 1, 2, 3, 4, 0, time.UTC)
 	}
-	path := filepath.Join(dir, "20260601020304000_create_posts.sql")
+	path := filepath.Join(dir, "20260601020304_create_posts.sql")
 	if err := os.WriteFile(path, []byte("keep\n"), 0o644); err != nil {
 		t.Fatalf("os.WriteFile(existing migration) error = %v, want nil", err)
 	}
@@ -63,7 +63,7 @@ func TestGenerateMigrationDoesNotOverwriteExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateMigration(existing migration) error = %v, want nil", err)
 	}
-	wantPath := filepath.Join(dir, "20260601020304001_create_posts.sql")
+	wantPath := filepath.Join(dir, "20260601020305_create_posts.sql")
 	if gotPath != wantPath {
 		t.Errorf("GenerateMigration(existing migration) path = %q, want %q", gotPath, wantPath)
 	}
@@ -95,12 +95,37 @@ func TestGenerateMigrationAvoidsDuplicateVersionsWithinSameSecond(t *testing.T) 
 		t.Fatalf("GenerateMigration(add_posts_index) error = %v, want nil", err)
 	}
 
-	wantFirst := filepath.Join(dir, "20260601020304000_create_posts.sql")
-	wantSecond := filepath.Join(dir, "20260601020304001_add_posts_index.sql")
+	wantFirst := filepath.Join(dir, "20260601020304_create_posts.sql")
+	wantSecond := filepath.Join(dir, "20260601020305_add_posts_index.sql")
 	if first != wantFirst {
 		t.Errorf("GenerateMigration(create_posts) path = %q, want %q", first, wantFirst)
 	}
 	if second != wantSecond {
 		t.Errorf("GenerateMigration(add_posts_index) path = %q, want %q", second, wantSecond)
+	}
+}
+
+func TestGenerateMigrationCollisionAdvancesByClockSecond(t *testing.T) {
+	dir := t.TempDir()
+	now := func() time.Time {
+		return time.Date(2026, 6, 1, 2, 3, 59, 0, time.UTC)
+	}
+	existingPath := filepath.Join(dir, "20260601020359_create_posts.sql")
+	if err := os.WriteFile(existingPath, []byte("keep\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(existing migration) error = %v, want nil", err)
+	}
+
+	path, err := GenerateMigration(Migration{
+		Name: "add_posts_index",
+		Dir:  dir,
+		Now:  now,
+	})
+	if err != nil {
+		t.Fatalf("GenerateMigration(add_posts_index) error = %v, want nil", err)
+	}
+
+	wantPath := filepath.Join(dir, "20260601020400_add_posts_index.sql")
+	if path != wantPath {
+		t.Errorf("GenerateMigration(add_posts_index) path = %q, want %q", path, wantPath)
 	}
 }
