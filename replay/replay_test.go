@@ -3,8 +3,12 @@ package replay
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,9 +23,12 @@ func TestCaptureScrubsSnapshotAndOmitsBody(t *testing.T) {
 	request.Header.Set(ohm.RequestIDHeader, "req-test")
 	requestIDHeader := http.CanonicalHeaderKey(ohm.RequestIDHeader)
 
-	got := Capture(request, WithClock(func() time.Time {
+	got, err := Capture(request, WithClock(func() time.Time {
 		return now
 	}), WithHeaders("Accept", "Authorization", ohm.RequestIDHeader))
+	if err != nil {
+		t.Fatalf("Capture(request) error = %v, want nil", err)
+	}
 
 	if got.Version != snapshotVersion {
 		t.Errorf("Capture(request) Version = %d, want %d", got.Version, snapshotVersion)
@@ -52,6 +59,164 @@ func TestCaptureScrubsSnapshotAndOmitsBody(t *testing.T) {
 	}
 	if !got.BodyOmitted {
 		t.Errorf("Capture(request) BodyOmitted = false, want true")
+	}
+}
+
+func TestCaptureCapturesBodyWithinLimitAndRestoresRequestBody(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("title=hello"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	got, err := Capture(request, WithBodyLimit(64))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(64)) error = %v, want nil", err)
+	}
+
+	if string(got.Body) != "title=hello" {
+		t.Errorf("Capture(request, WithBodyLimit(64)) Body = %q, want %q", got.Body, "title=hello")
+	}
+	if got.BodyOmitted {
+		t.Errorf("Capture(request, WithBodyLimit(64)) BodyOmitted = true, want false")
+	}
+
+	restored, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("io.ReadAll(restored request body) error = %v, want nil", err)
+	}
+	if string(restored) != "title=hello" {
+		t.Errorf("restored request body = %q, want %q", restored, "title=hello")
+	}
+}
+
+func TestCaptureScrubsFormBodyBeforeStoringSnapshot(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=ada&password=secret&token=abc"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	got, err := Capture(request, WithBodyLimit(128))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(128)) error = %v, want nil", err)
+	}
+
+	if bytes.Contains(got.Body, []byte("secret")) || bytes.Contains(got.Body, []byte("abc")) {
+		t.Fatalf("Capture(request, WithBodyLimit(128)) Body = %q, want sensitive values redacted", got.Body)
+	}
+	values, err := url.ParseQuery(string(got.Body))
+	if err != nil {
+		t.Fatalf("url.ParseQuery(%q) error = %v, want nil", got.Body, err)
+	}
+	if values.Get("username") != "ada" {
+		t.Errorf("scrubbed form username = %q, want %q", values.Get("username"), "ada")
+	}
+	if values.Get("password") != "[REDACTED]" {
+		t.Errorf("scrubbed form password = %q, want [REDACTED]", values.Get("password"))
+	}
+	if values.Get("token") != "[REDACTED]" {
+		t.Errorf("scrubbed form token = %q, want [REDACTED]", values.Get("token"))
+	}
+}
+
+func TestCaptureScrubsJSONBodyBeforeStoringSnapshot(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"username":"ada","token":"secret","nested":{"password":"hidden"}}`))
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	got, err := Capture(request, WithBodyLimit(128))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(128)) error = %v, want nil", err)
+	}
+
+	if bytes.Contains(got.Body, []byte("secret")) || bytes.Contains(got.Body, []byte("hidden")) {
+		t.Fatalf("Capture(request, WithBodyLimit(128)) Body = %q, want sensitive values redacted", got.Body)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(got.Body, &body); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", got.Body, err)
+	}
+	if body["username"] != "ada" {
+		t.Errorf("scrubbed JSON username = %v, want %q", body["username"], "ada")
+	}
+	if body["token"] != "[REDACTED]" {
+		t.Errorf("scrubbed JSON token = %v, want [REDACTED]", body["token"])
+	}
+	nested := body["nested"].(map[string]any)
+	if nested["password"] != "[REDACTED]" {
+		t.Errorf("scrubbed JSON nested password = %v, want [REDACTED]", nested["password"])
+	}
+}
+
+func TestCaptureOmitsBodyWhenScrubbingExceedsLimit(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"token":"x"}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	got, err := Capture(request, WithBodyLimit(13))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(13)) error = %v, want nil", err)
+	}
+
+	if !got.BodyOmitted {
+		t.Errorf("Capture(request, WithBodyLimit(13)) BodyOmitted = false, want true")
+	}
+	if len(got.Body) != 0 {
+		t.Errorf("Capture(request, WithBodyLimit(13)) Body = %q, want empty", got.Body)
+	}
+}
+
+func TestCaptureOmitsUnsupportedBodyContentTypes(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("secret"))
+	request.Header.Set("Content-Type", "text/plain")
+
+	got, err := Capture(request, WithBodyLimit(64))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(64)) error = %v, want nil", err)
+	}
+
+	if !got.BodyOmitted {
+		t.Errorf("Capture(request, WithBodyLimit(64)) BodyOmitted = false, want true")
+	}
+	if len(got.Body) != 0 {
+		t.Errorf("Capture(request, WithBodyLimit(64)) Body = %q, want empty", got.Body)
+	}
+
+	restored, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("io.ReadAll(restored request body) error = %v, want nil", err)
+	}
+	if string(restored) != "secret" {
+		t.Errorf("restored request body = %q, want %q", restored, "secret")
+	}
+}
+
+func TestCaptureOmitsBodyOverLimitAndRestoresRequestBody(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("abcdef"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	got, err := Capture(request, WithBodyLimit(3))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(3)) error = %v, want nil", err)
+	}
+
+	if !got.BodyOmitted {
+		t.Errorf("Capture(request, WithBodyLimit(3)) BodyOmitted = false, want true")
+	}
+	if len(got.Body) != 0 {
+		t.Errorf("Capture(request, WithBodyLimit(3)) Body = %q, want empty", got.Body)
+	}
+
+	restored, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("io.ReadAll(restored request body) error = %v, want nil", err)
+	}
+	if string(restored) != "abcdef" {
+		t.Errorf("restored request body = %q, want %q", restored, "abcdef")
+	}
+}
+
+func TestCaptureReportsBodyReadErrors(t *testing.T) {
+	wantErr := errors.New("read failed")
+	request := httptest.NewRequest(http.MethodPost, "/posts", nil)
+	request.Body = failingReadCloser{err: wantErr}
+
+	_, err := Capture(request, WithBodyLimit(64))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Capture(request, WithBodyLimit(64)) error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -150,4 +315,16 @@ func TestNewRequestRejectsInvalidSnapshots(t *testing.T) {
 	if err == nil {
 		t.Fatalf("NewRequest(snapshot without path) error = nil, want non-nil")
 	}
+}
+
+type failingReadCloser struct {
+	err error
+}
+
+func (r failingReadCloser) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func (r failingReadCloser) Close() error {
+	return nil
 }

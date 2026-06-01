@@ -3,11 +3,15 @@ package replay
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -55,9 +59,10 @@ type ExpectedResponse struct {
 type Option func(*captureOptions)
 
 type captureOptions struct {
-	headers  []string
-	redactor *scrub.Redactor
-	now      func() time.Time
+	headers   []string
+	redactor  *scrub.Redactor
+	now       func() time.Time
+	bodyLimit int64
 }
 
 // WithHeaders configures the request headers captured into a snapshot.
@@ -85,12 +90,26 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+// WithBodyLimit captures the request body when it is no larger than limit bytes.
+func WithBodyLimit(limit int64) Option {
+	return func(opts *captureOptions) {
+		if limit >= 0 {
+			opts.bodyLimit = limit
+		}
+	}
+}
+
 // Capture creates a scrubbed request snapshot.
-func Capture(r *http.Request, opts ...Option) Snapshot {
+func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
+	if r == nil {
+		return Snapshot{}, fmt.Errorf("request is required")
+	}
+
 	cfg := captureOptions{
-		headers:  defaultHeaders,
-		redactor: scrub.New(),
-		now:      time.Now,
+		headers:   defaultHeaders,
+		redactor:  scrub.New(),
+		now:       time.Now,
+		bodyLimit: -1,
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -103,7 +122,7 @@ func Capture(r *http.Request, opts ...Option) Snapshot {
 		requestID = r.Header.Get(ohm.RequestIDHeader)
 	}
 
-	return Snapshot{
+	snapshot := Snapshot{
 		Version:      snapshotVersion,
 		Method:       r.Method,
 		Path:         r.URL.Path,
@@ -114,6 +133,25 @@ func Capture(r *http.Request, opts ...Option) Snapshot {
 		CapturedAt:   cfg.now().UTC(),
 		BodyOmitted:  true,
 	}
+	if cfg.bodyLimit >= 0 {
+		body, omitted, err := captureBody(r, cfg.bodyLimit)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("capture request body: %w", err)
+		}
+		if !omitted {
+			body, omitted, err = scrubBody(cfg.redactor, r.Header.Get("Content-Type"), body)
+			if err != nil {
+				return Snapshot{}, fmt.Errorf("scrub request body: %w", err)
+			}
+			if !omitted && int64(len(body)) > cfg.bodyLimit {
+				body = nil
+				omitted = true
+			}
+		}
+		snapshot.Body = body
+		snapshot.BodyOmitted = omitted
+	}
+	return snapshot, nil
 }
 
 // NewRequest builds a test request from snapshot.
@@ -215,6 +253,75 @@ func scrubValues(redactor *scrub.Redactor, values map[string][]string) map[strin
 	return out
 }
 
+func captureBody(r *http.Request, limit int64) ([]byte, bool, error) {
+	if r.Body == nil || r.Body == http.NoBody {
+		return nil, false, nil
+	}
+
+	readLimit := limit + 1
+	if limit == maxInt64 {
+		readLimit = limit
+	}
+	body := r.Body
+	captured, err := io.ReadAll(io.LimitReader(body, readLimit))
+	r.Body = bodyWithPrefix(body, captured)
+	if err != nil {
+		return nil, true, err
+	}
+	if int64(len(captured)) > limit {
+		return nil, true, nil
+	}
+	return captured, false, nil
+}
+
+func bodyWithPrefix(body io.ReadCloser, prefix []byte) io.ReadCloser {
+	return struct {
+		io.Reader
+		io.Closer
+	}{
+		Reader: io.MultiReader(bytes.NewReader(prefix), body),
+		Closer: body,
+	}
+}
+
+func scrubBody(redactor *scrub.Redactor, contentType string, body []byte) ([]byte, bool, error) {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, true, nil
+	}
+
+	switch {
+	case mediaType == "application/x-www-form-urlencoded":
+		values, err := url.ParseQuery(string(body))
+		if err != nil {
+			return nil, true, nil
+		}
+		return []byte(url.Values(scrubValues(redactor, values)).Encode()), false, nil
+	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
+		var value any
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.UseNumber()
+		if err := decoder.Decode(&value); err != nil {
+			return nil, true, nil
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			return nil, true, nil
+		}
+		switch value.(type) {
+		case map[string]any, []any:
+		default:
+			return nil, true, nil
+		}
+		scrubbed, err := json.Marshal(redactor.Any("", value))
+		if err != nil {
+			return nil, false, err
+		}
+		return scrubbed, false, nil
+	default:
+		return nil, true, nil
+	}
+}
+
 func routePattern(r *http.Request) string {
 	routeContext := chi.RouteContext(r.Context())
 	if routeContext == nil {
@@ -222,3 +329,5 @@ func routePattern(r *http.Request) string {
 	}
 	return routeContext.RoutePattern()
 }
+
+const maxInt64 = int64(^uint64(0) >> 1)
