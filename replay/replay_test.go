@@ -3,8 +3,11 @@ package replay
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,9 +22,12 @@ func TestCaptureScrubsSnapshotAndOmitsBody(t *testing.T) {
 	request.Header.Set(ohm.RequestIDHeader, "req-test")
 	requestIDHeader := http.CanonicalHeaderKey(ohm.RequestIDHeader)
 
-	got := Capture(request, WithClock(func() time.Time {
+	got, err := Capture(request, WithClock(func() time.Time {
 		return now
 	}), WithHeaders("Accept", "Authorization", ohm.RequestIDHeader))
+	if err != nil {
+		t.Fatalf("Capture(request) error = %v, want nil", err)
+	}
 
 	if got.Version != snapshotVersion {
 		t.Errorf("Capture(request) Version = %d, want %d", got.Version, snapshotVersion)
@@ -52,6 +58,65 @@ func TestCaptureScrubsSnapshotAndOmitsBody(t *testing.T) {
 	}
 	if !got.BodyOmitted {
 		t.Errorf("Capture(request) BodyOmitted = false, want true")
+	}
+}
+
+func TestCaptureCapturesBodyWithinLimitAndRestoresRequestBody(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("title=hello"))
+
+	got, err := Capture(request, WithBodyLimit(64))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(64)) error = %v, want nil", err)
+	}
+
+	if string(got.Body) != "title=hello" {
+		t.Errorf("Capture(request, WithBodyLimit(64)) Body = %q, want %q", got.Body, "title=hello")
+	}
+	if got.BodyOmitted {
+		t.Errorf("Capture(request, WithBodyLimit(64)) BodyOmitted = true, want false")
+	}
+
+	restored, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("io.ReadAll(restored request body) error = %v, want nil", err)
+	}
+	if string(restored) != "title=hello" {
+		t.Errorf("restored request body = %q, want %q", restored, "title=hello")
+	}
+}
+
+func TestCaptureOmitsBodyOverLimitAndRestoresRequestBody(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("abcdef"))
+
+	got, err := Capture(request, WithBodyLimit(3))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(3)) error = %v, want nil", err)
+	}
+
+	if !got.BodyOmitted {
+		t.Errorf("Capture(request, WithBodyLimit(3)) BodyOmitted = false, want true")
+	}
+	if len(got.Body) != 0 {
+		t.Errorf("Capture(request, WithBodyLimit(3)) Body = %q, want empty", got.Body)
+	}
+
+	restored, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("io.ReadAll(restored request body) error = %v, want nil", err)
+	}
+	if string(restored) != "abcdef" {
+		t.Errorf("restored request body = %q, want %q", restored, "abcdef")
+	}
+}
+
+func TestCaptureReportsBodyReadErrors(t *testing.T) {
+	wantErr := errors.New("read failed")
+	request := httptest.NewRequest(http.MethodPost, "/posts", nil)
+	request.Body = failingReadCloser{err: wantErr}
+
+	_, err := Capture(request, WithBodyLimit(64))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Capture(request, WithBodyLimit(64)) error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -150,4 +215,16 @@ func TestNewRequestRejectsInvalidSnapshots(t *testing.T) {
 	if err == nil {
 		t.Fatalf("NewRequest(snapshot without path) error = nil, want non-nil")
 	}
+}
+
+type failingReadCloser struct {
+	err error
+}
+
+func (r failingReadCloser) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func (r failingReadCloser) Close() error {
+	return nil
 }
