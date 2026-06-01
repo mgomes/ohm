@@ -46,6 +46,44 @@ func TestNewCommandCreatesApplicationWithFlagsAfterName(t *testing.T) {
 	}
 }
 
+func TestGenerateMigrationCommandCreatesMigrationWithFlagsAfterName(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(%q) error = %v, want nil", dir, err)
+	}
+	t.Chdir(dir)
+
+	var stdout bytes.Buffer
+	program := New(WithIO(cli.IO{Stdout: &stdout}))
+
+	args := []string{"generate", "migration", "create_posts", "--dir", "db/migrations"}
+	err := program.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Program.Run(%v) error = %v, want nil", args, err)
+	}
+
+	files, err := filepath.Glob(filepath.Join("db", "migrations", "*_create_posts.sql"))
+	if err != nil {
+		t.Fatalf("filepath.Glob(generated migration) error = %v, want nil", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("Program.Run(%v) generated migrations = %v, want one file", args, files)
+	}
+	if !strings.Contains(stdout.String(), "Created "+files[0]) {
+		t.Errorf("Program.Run(%v) stdout = %q, want generated migration path", args, stdout.String())
+	}
+}
+
+func TestGenerateMigrationCommandRejectsUnknownGenerator(t *testing.T) {
+	program := New()
+
+	args := []string{"generate", "model", "Post"}
+	err := program.Run(context.Background(), args)
+	if !errors.Is(err, cli.ErrUsage) {
+		t.Fatalf("Program.Run(%v) error = %v, want ErrUsage", args, err)
+	}
+}
+
 func TestNewCommandCreatesPostgresApplicationByDefault(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "ledger")
 	var stdout bytes.Buffer
