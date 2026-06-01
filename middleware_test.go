@@ -128,3 +128,102 @@ func TestRequestLoggerPreservesOptionalResponseWriterInterfaces(t *testing.T) {
 		t.Errorf("App.ServeHTTP(%s %s) flushed = false, want true", request.Method, request.URL.Path)
 	}
 }
+
+func TestRecovererLogsRedactedPanicAndRendersInternalServerError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	app := New()
+	app.Use(Recoverer(logger))
+	app.Get("/panic/{id}", func(*Request) error {
+		panic(map[string]string{"token": "secret"})
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/panic/42?token=secret", nil)
+	request.Header.Set(RequestIDHeader, "req-panic")
+	request.Header.Set("User-Agent", "panic-test")
+	request.RemoteAddr = "192.0.2.20:4321"
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.String(), res.Code, http.StatusInternalServerError)
+	}
+	if res.Body.String() != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.String(), res.Body.String(), http.StatusText(http.StatusInternalServerError))
+	}
+	if res.Header().Get(RequestIDHeader) != "req-panic" {
+		t.Errorf("App.ServeHTTP(%s %s) response request id = %q, want %q", request.Method, request.URL.String(), res.Header().Get(RequestIDHeader), "req-panic")
+	}
+
+	output := buf.String()
+	if bytes.Contains(buf.Bytes(), []byte("secret")) {
+		t.Errorf("panic log %q contains sensitive value", output)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+
+	want := map[string]any{
+		"level":          "ERROR",
+		"msg":            "panic",
+		"request_id":     "req-panic",
+		"method":         http.MethodGet,
+		"path":           "/panic/42",
+		"status":         float64(http.StatusInternalServerError),
+		"remote_addr":    "192.0.2.20:4321",
+		"user_agent":     "panic-test",
+		"content_length": float64(0),
+		"route_pattern":  "/panic/{id}",
+		"panic_type":     "map[string]string",
+		"panic":          "[REDACTED]",
+	}
+	for key, wantValue := range want {
+		if got[key] != wantValue {
+			t.Errorf("panic log field %s = %v, want %v", key, got[key], wantValue)
+		}
+	}
+	if got["stack"] == "" {
+		t.Errorf("panic log stack missing from %v", got)
+	}
+	if _, ok := got["duration"]; !ok {
+		t.Errorf("panic log duration missing from %v", got)
+	}
+}
+
+func TestRecovererLetsRequestLoggerRecordRecoveredStatus(t *testing.T) {
+	var requestBuf bytes.Buffer
+	var panicBuf bytes.Buffer
+
+	app := New()
+	app.Use(
+		RequestLogger(slog.New(slog.NewJSONHandler(&requestBuf, nil))),
+		Recoverer(slog.New(slog.NewJSONHandler(&panicBuf, nil))),
+	)
+	app.Get("/panic", func(*Request) error {
+		panic("boom")
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusInternalServerError)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(requestBuf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", requestBuf.String(), err)
+	}
+	if got["status"] != float64(http.StatusInternalServerError) {
+		t.Errorf("request log status = %v, want %d", got["status"], http.StatusInternalServerError)
+	}
+	if got["request_id"] == "" {
+		t.Errorf("request log request_id = empty, want generated request id")
+	}
+}

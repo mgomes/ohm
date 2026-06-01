@@ -66,6 +66,9 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(appFile, "slog.NewJSONHandler(os.Stderr, nil)") {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want request logs on stderr", appFile)
 	}
+	if !strings.Contains(appFile, "ohm.RequestLogger(logger), ohm.Recoverer(logger)") {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want recovery middleware after request logger", appFile)
+	}
 }
 
 func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
