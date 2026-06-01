@@ -108,7 +108,7 @@ func TestExpectedResponseFromCapturesStableResponseFields(t *testing.T) {
 	if got.Status != http.StatusCreated {
 		t.Errorf("ExpectedResponseFrom(response) Status = %d, want %d", got.Status, http.StatusCreated)
 	}
-	if got.Body != "created" {
+	if string(got.Body) != "created" {
 		t.Errorf("ExpectedResponseFrom(response) Body = %q, want %q", got.Body, "created")
 	}
 	if got.Headers["Content-Type"][0] != "text/plain; charset=utf-8" {

@@ -86,7 +86,7 @@ func TestCommandWritesExpectedResponse(t *testing.T) {
 	if snapshot.ExpectedResponse.Status != http.StatusCreated {
 		t.Errorf("snapshot.ExpectedResponse.Status = %d, want %d", snapshot.ExpectedResponse.Status, http.StatusCreated)
 	}
-	if snapshot.ExpectedResponse.Body != "post 42" {
+	if string(snapshot.ExpectedResponse.Body) != "post 42" {
 		t.Errorf("snapshot.ExpectedResponse.Body = %q, want %q", snapshot.ExpectedResponse.Body, "post 42")
 	}
 	if snapshot.ExpectedResponse.Headers["Content-Type"][0] != "text/plain; charset=utf-8" {

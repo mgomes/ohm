@@ -47,7 +47,7 @@ type Snapshot struct {
 type ExpectedResponse struct {
 	Status      int                 `json:"status"`
 	Headers     map[string][]string `json:"headers,omitempty"`
-	Body        string              `json:"body,omitempty"`
+	Body        []byte              `json:"body,omitempty"`
 	BodyOmitted bool                `json:"body_omitted,omitempty"`
 }
 
@@ -163,7 +163,7 @@ func ExpectedResponseFrom(response *httptest.ResponseRecorder) (ExpectedResponse
 		expected.BodyOmitted = true
 		return expected, nil
 	}
-	expected.Body = response.Body.String()
+	expected.Body = slices.Clone(response.Body.Bytes())
 	return expected, nil
 }
 

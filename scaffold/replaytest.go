@@ -207,6 +207,7 @@ func renderReplayTest(data replayTestData) ([]byte, error) {
 const replayTestTemplate = `package replaytests
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 	"testing"
@@ -242,8 +243,8 @@ func {{.TestName}}(t *testing.T) {
 			t.Errorf("replay response header %s = %v, want %v", header, got, values)
 		}
 	}
-	if !expected.BodyOmitted && response.Body.String() != expected.Body {
-		t.Errorf("replay response body = %q, want %q", response.Body.String(), expected.Body)
+	if !expected.BodyOmitted && !bytes.Equal(response.Body.Bytes(), expected.Body) {
+		t.Errorf("replay response body = %q, want %q", response.Body.Bytes(), expected.Body)
 	}
 }
 `

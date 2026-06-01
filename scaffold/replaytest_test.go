@@ -32,7 +32,7 @@ func TestGenerateReplayTestWritesRegressionTest(t *testing.T) {
 			Headers: map[string][]string{
 				"Content-Type": {"text/html; charset=utf-8"},
 			},
-			Body: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Journal</title></head><body><main><h1>Welcome to Journal</h1></main></body></html>`,
+			Body: []byte(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Journal</title></head><body><main><h1>Welcome to Journal</h1></main></body></html>`),
 		},
 	})
 
