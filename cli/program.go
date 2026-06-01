@@ -13,6 +13,9 @@ import (
 // ErrUsage reports command-line usage errors.
 var ErrUsage = errors.New("usage error")
 
+// ErrHelp requests command help.
+var ErrHelp = errors.New("help requested")
+
 // IO contains command input and output streams.
 type IO struct {
 	Stdin  io.Reader
@@ -124,6 +127,10 @@ func (p *Program) Run(ctx context.Context, args []string) error {
 		return fmt.Errorf("command %q has no runner", command.Name)
 	}
 	if err := command.Run(ctx, commandIO, commandArgs); err != nil {
+		if errors.Is(err, ErrHelp) {
+			writeCommandHelp(commandIO.Stdout, p.name, command)
+			return nil
+		}
 		return fmt.Errorf("run %s: %w", command.Name, err)
 	}
 	return nil

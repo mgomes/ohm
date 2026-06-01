@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProgramRunDispatchesCommand(t *testing.T) {
@@ -80,5 +82,31 @@ func TestProgramRunPrintsCommandHelpWithFlagPackageHelpArg(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Usage: myapp server [-addr :3000]") {
 		t.Errorf("Program.Run(%v) stdout = %q, want command usage", []string{"server", "-help"}, stdout.String())
+	}
+}
+
+func TestProgramRunPrintsCommandHelpAfterCommandFlags(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	program := New("myapp", []Command{
+		ServerCommand(
+			http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+			WithServerRunner(func(context.Context, *http.Server, time.Duration) error {
+				t.Fatalf("server runner called for help argument")
+				return nil
+			}),
+		),
+	}, WithIO(IO{Stdout: &stdout, Stderr: &stderr}))
+
+	args := []string{"server", "-addr", ":4000", "-h"}
+	err := program.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Program.Run(%v) error = %v, want nil", args, err)
+	}
+	if !strings.Contains(stdout.String(), "Usage: myapp server [-addr :3000]") {
+		t.Errorf("Program.Run(%v) stdout = %q, want command usage", args, stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Errorf("Program.Run(%v) stderr = %q, want empty", args, stderr.String())
 	}
 }

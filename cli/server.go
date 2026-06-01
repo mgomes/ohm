@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -71,9 +72,18 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 		Run: func(ctx context.Context, commandIO IO, args []string) error {
 			commandIO = commandIO.withDefaults()
 			flags := flag.NewFlagSet(cfg.name, flag.ContinueOnError)
-			flags.SetOutput(commandIO.Stderr)
+			var flagOutput bytes.Buffer
+			flags.SetOutput(&flagOutput)
 			addr := flags.String("addr", cfg.addr, "HTTP listen address")
 			if err := flags.Parse(args); err != nil {
+				if errors.Is(err, flag.ErrHelp) {
+					return ErrHelp
+				}
+				if flagOutput.Len() > 0 {
+					if _, writeErr := commandIO.Stderr.Write(flagOutput.Bytes()); writeErr != nil {
+						return fmt.Errorf("write flag usage: %w", writeErr)
+					}
+				}
 				return fmt.Errorf("%w: %v", ErrUsage, err)
 			}
 			if flags.NArg() > 0 {
