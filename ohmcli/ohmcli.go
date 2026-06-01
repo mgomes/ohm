@@ -52,7 +52,7 @@ func generateCommand() cli.Command {
 	return cli.Command{
 		Name:    "generate",
 		Summary: "generate application code",
-		Usage:   "generate <handler|migration|test-from-replay> [args]",
+		Usage:   "generate <handler|migration|resource|test-from-replay> [args]",
 		Run: func(_ context.Context, commandIO cli.IO, args []string) error {
 			commandIO = withIODefaults(commandIO)
 			if len(args) == 0 {
@@ -95,6 +95,26 @@ func generateCommand() cli.Command {
 					return err
 				}
 				fmt.Fprintf(commandIO.Stdout, "Created %s\n", path)
+				return nil
+			case "resource":
+				parsed, err := parseResourceArgs(args[1:])
+				if err != nil {
+					return err
+				}
+				result, err := scaffold.GenerateResource(scaffold.Resource{
+					Name:   parsed.name,
+					Fields: parsed.fields,
+					Dir:    parsed.dir,
+				})
+				if err != nil {
+					return err
+				}
+				for _, path := range result.CreatedFiles {
+					fmt.Fprintf(commandIO.Stdout, "Created %s\n", path)
+				}
+				if result.RegisterUpdated {
+					fmt.Fprintf(commandIO.Stdout, "Updated %s\n", result.RegisterFile)
+				}
 				return nil
 			case "test-from-replay":
 				parsed, err := parseReplayTestArgs(args[1:])
@@ -172,6 +192,60 @@ type migrationArgs namedDirArgs
 func parseMigrationArgs(args []string) (migrationArgs, error) {
 	parsed, err := parseNamedDirArgs("migration", args)
 	return migrationArgs(parsed), err
+}
+
+type resourceArgs struct {
+	name   string
+	fields []scaffold.ResourceField
+	dir    string
+}
+
+func parseResourceArgs(args []string) (resourceArgs, error) {
+	parsed := resourceArgs{}
+	var positionals []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case isHelpArg(arg):
+			return resourceArgs{}, cli.ErrHelp
+		case arg == "-dir" || arg == "--dir":
+			value, ok := nextArg(args, &i)
+			if !ok {
+				return resourceArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
+			}
+			parsed.dir = value
+		case strings.HasPrefix(arg, "-dir="):
+			parsed.dir = strings.TrimPrefix(arg, "-dir=")
+		case strings.HasPrefix(arg, "--dir="):
+			parsed.dir = strings.TrimPrefix(arg, "--dir=")
+		case strings.HasPrefix(arg, "-"):
+			return resourceArgs{}, fmt.Errorf("%w: unknown resource flag %q", cli.ErrUsage, arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+
+	if len(positionals) < 2 {
+		return resourceArgs{}, fmt.Errorf("%w: resource requires a name and at least one field", cli.ErrUsage)
+	}
+	parsed.name = positionals[0]
+	for _, fieldArg := range positionals[1:] {
+		field, err := parseResourceFieldArg(fieldArg)
+		if err != nil {
+			return resourceArgs{}, err
+		}
+		parsed.fields = append(parsed.fields, field)
+	}
+	return parsed, nil
+}
+
+func parseResourceFieldArg(arg string) (scaffold.ResourceField, error) {
+	name, fieldType, ok := strings.Cut(arg, ":")
+	if !ok || name == "" || fieldType == "" {
+		return scaffold.ResourceField{}, fmt.Errorf("%w: resource field %q must use name:type", cli.ErrUsage, arg)
+	}
+	return scaffold.ResourceField{Name: name, Type: fieldType}, nil
 }
 
 type replayTestArgs struct {
