@@ -46,6 +46,10 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/views/assets/assets.go",
 		"internal/views/assets/assets_test.go",
 		"internal/views/components/README.md",
+		"internal/views/components/flash.go",
+		"internal/views/components/flash.templ",
+		"internal/views/components/flash_test.go",
+		"internal/views/components/flash_templ.go",
 		"internal/views/forms/forms.go",
 		"internal/views/forms/forms_test.go",
 		"internal/views/layouts/application.templ",
@@ -245,6 +249,19 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	errorView := readFile(t, filepath.Join(destination, "internal", "views", "pages", "error.templ"))
 	if !strings.Contains(errorView, `templ Error(status int, message string)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/pages/error.templ = %q, want error page component", errorView)
+	}
+
+	flashComponent := readFile(t, filepath.Join(destination, "internal", "views", "components", "flash.go"))
+	if !strings.Contains(flashComponent, `type FlashMessage struct`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/components/flash.go = %q, want flash message type", flashComponent)
+	}
+	if !strings.Contains(flashComponent, `func NewFlashMessage(level FlashLevel, text string) FlashMessage`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/components/flash.go = %q, want flash message constructor", flashComponent)
+	}
+
+	flashView := readFile(t, filepath.Join(destination, "internal", "views", "components", "flash.templ"))
+	if !strings.Contains(flashView, `templ Flash(messages []FlashMessage)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/components/flash.templ = %q, want flash component", flashView)
 	}
 
 	if !strings.Contains(appTestFile, `hasRoute(routes, "GET", "/")`) {
