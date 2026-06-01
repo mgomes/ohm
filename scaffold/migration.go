@@ -22,12 +22,28 @@ type Migration struct {
 }
 
 // GenerateMigration writes a timestamped goose migration file and returns its path.
-func GenerateMigration(cfg Migration) (path string, err error) {
+func GenerateMigration(cfg Migration) (string, error) {
+	file, err := prepareMigrationFile(cfg, []byte(migrationTemplate))
+	if err != nil {
+		return "", err
+	}
+	if err := writeNewFile(file.path, file.body); err != nil {
+		return "", err
+	}
+	return file.path, nil
+}
+
+type migrationFile struct {
+	path string
+	body []byte
+}
+
+func prepareMigrationFile(cfg Migration, body []byte) (migrationFile, error) {
 	if cfg.Name == "" {
-		return "", fmt.Errorf("migration name is required")
+		return migrationFile{}, fmt.Errorf("migration name is required")
 	}
 	if !migrationNamePattern.MatchString(cfg.Name) {
-		return "", fmt.Errorf("migration name %q must start with a lowercase letter and contain only lowercase letters, digits, or underscores", cfg.Name)
+		return migrationFile{}, fmt.Errorf("migration name %q must start with a lowercase letter and contain only lowercase letters, digits, or underscores", cfg.Name)
 	}
 
 	dir := cfg.Dir
@@ -40,29 +56,16 @@ func GenerateMigration(cfg Migration) (path string, err error) {
 	}
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create migrations directory %q: %w", dir, err)
+		return migrationFile{}, fmt.Errorf("create migrations directory %q: %w", dir, err)
 	}
 
 	version, err := nextMigrationVersion(dir, now())
 	if err != nil {
-		return "", err
+		return migrationFile{}, err
 	}
 
-	path = filepath.Join(dir, strconv.FormatInt(version, 10)+"_"+cfg.Name+".sql")
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return "", fmt.Errorf("create migration %q: %w", path, err)
-	}
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("close migration %q: %w", path, closeErr)
-		}
-	}()
-
-	if _, err := file.WriteString(migrationTemplate); err != nil {
-		return "", fmt.Errorf("write migration %q: %w", path, err)
-	}
-	return path, nil
+	path := filepath.Join(dir, strconv.FormatInt(version, 10)+"_"+cfg.Name+".sql")
+	return migrationFile{path: path, body: body}, nil
 }
 
 func nextMigrationVersion(dir string, now time.Time) (int64, error) {

@@ -117,6 +117,52 @@ func TestGenerateHandlerCommandCreatesHandlerWithFlagsAfterName(t *testing.T) {
 	}
 }
 
+func TestGenerateResourceCommandCreatesResourceFiles(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "journal")
+	if err := scaffold.GenerateApp(scaffold.App{
+		Destination: destination,
+		Module:      "example.com/journal",
+		Database:    scaffold.DatabaseSQLite,
+		OhmVersion:  "v0.0.0",
+	}); err != nil {
+		t.Fatalf("GenerateApp(journal) error = %v, want nil", err)
+	}
+	t.Chdir(destination)
+
+	var stdout bytes.Buffer
+	program := New(WithIO(cli.IO{Stdout: &stdout}))
+
+	args := []string{"generate", "resource", "Posts", "title:string", "body:text"}
+	err := program.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Program.Run(%v) error = %v, want nil", args, err)
+	}
+
+	migrations, err := filepath.Glob(filepath.Join("migrations", "*_create_posts.sql"))
+	if err != nil {
+		t.Fatalf("filepath.Glob(generated migration) error = %v, want nil", err)
+	}
+	if len(migrations) != 1 {
+		t.Fatalf("Program.Run(%v) generated migrations = %v, want one file", args, migrations)
+	}
+	queryPath := filepath.Join("queries", "posts.sql")
+	handlerPath := filepath.Join("internal", "handlers", "posts.go")
+	for _, path := range []string{queryPath, handlerPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("Program.Run(%v) generated %s stat error = %v, want nil", args, path, err)
+		}
+	}
+	if !strings.Contains(stdout.String(), "Created "+migrations[0]) {
+		t.Errorf("Program.Run(%v) stdout = %q, want generated migration path", args, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Created "+queryPath) {
+		t.Errorf("Program.Run(%v) stdout = %q, want generated query path", args, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Updated "+filepath.Join("internal", "handlers", "home.go")) {
+		t.Errorf("Program.Run(%v) stdout = %q, want updated register path", args, stdout.String())
+	}
+}
+
 func TestGenerateTestFromReplayCommandCreatesReplayTest(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "journal")
 	if err := scaffold.GenerateApp(scaffold.App{
