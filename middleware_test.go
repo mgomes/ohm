@@ -227,3 +227,32 @@ func TestRecovererLetsRequestLoggerRecordRecoveredStatus(t *testing.T) {
 		t.Errorf("request log request_id = empty, want generated request id")
 	}
 }
+
+func TestRecovererPreservesHTTPAbortHandlerPanic(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	app := New()
+	app.Use(Recoverer(logger))
+	app.Get("/abort", func(*Request) error {
+		panic(http.ErrAbortHandler)
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/abort", nil)
+	res := httptest.NewRecorder()
+
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		app.ServeHTTP(res, request)
+	}()
+
+	if recovered != http.ErrAbortHandler {
+		t.Fatalf("App.ServeHTTP(%s %s) panic = %v, want %v", request.Method, request.URL.Path, recovered, http.ErrAbortHandler)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("Recoverer(logger) log = %q, want empty for http.ErrAbortHandler", buf.String())
+	}
+}

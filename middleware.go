@@ -60,6 +60,9 @@ func Recoverer(logger *slog.Logger) Middleware {
 				if recovered == nil {
 					return
 				}
+				if recovered == http.ErrAbortHandler {
+					panic(recovered)
+				}
 
 				attrs := requestLogAttrs(r, requestID, http.StatusInternalServerError, time.Since(start))
 				attrs = append(attrs,
