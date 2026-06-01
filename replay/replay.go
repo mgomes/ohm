@@ -2,6 +2,7 @@ package replay
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -131,14 +132,22 @@ func NewRequest(snapshot Snapshot) (*http.Request, error) {
 
 // Run replays snapshot through handler and returns the response.
 func Run(handler http.Handler, snapshot Snapshot) (*httptest.ResponseRecorder, error) {
+	return run(context.Background(), handler, snapshot)
+}
+
+func run(ctx context.Context, handler http.Handler, snapshot Snapshot) (*httptest.ResponseRecorder, error) {
 	if handler == nil {
 		return nil, fmt.Errorf("replay handler is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	request, err := NewRequest(snapshot)
 	if err != nil {
 		return nil, err
 	}
+	request = request.WithContext(ctx)
 
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
