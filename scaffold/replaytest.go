@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -119,22 +120,22 @@ func readReplaySnapshot(path string) (replay.Snapshot, error) {
 }
 
 func readModulePath(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+	dir := filepath.Dir(path)
+	if dir == "" {
+		dir = "."
 	}
 
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == "module" {
-			module := fields[1]
-			if unquoted, err := strconv.Unquote(module); err == nil {
-				module = unquoted
-			}
-			return module, nil
-		}
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Path}}")
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("resolve module path from %s: %w\n%s", path, err, output)
 	}
-	return "", fmt.Errorf("%s does not declare a module path", path)
+	module := strings.TrimSpace(string(output))
+	if module == "" {
+		return "", fmt.Errorf("%s does not declare a module path", path)
+	}
+	return module, nil
 }
 
 func replayTestNames(snapshotPath string) (fileBase string, testName string, err error) {

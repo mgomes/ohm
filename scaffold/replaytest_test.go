@@ -21,6 +21,12 @@ func TestGenerateReplayTestWritesRegressionTest(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("GenerateApp(journal) error = %v, want nil", err)
 	}
+	goModPath := filepath.Join(destination, "go.mod")
+	goMod := readFile(t, goModPath)
+	goMod = strings.Replace(goMod, "module example.com/journal", "module example.com/journal // app module", 1)
+	if err := os.WriteFile(goModPath, []byte(goMod), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", goModPath, err)
+	}
 
 	snapshotPath := filepath.Join(destination, "tmp", "replays", "home-page.json")
 	writeReplaySnapshot(t, snapshotPath, replay.Snapshot{
