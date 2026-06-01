@@ -183,13 +183,19 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(appFile, "ohm.RequestLogger(logger), ohm.Recoverer(logger)") {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want recovery middleware after request logger", appFile)
 	}
-	if !strings.Contains(appFile, `application.ChiRouter().Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.staticRoot))))`) {
-		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want static asset route", appFile)
+	if !strings.Contains(appFile, `application.ChiRouter().Get("/assets/*", assets.ServeHTTP)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want GET static asset route", appFile)
+	}
+	if !strings.Contains(appFile, `application.ChiRouter().Head("/assets/*", assets.ServeHTTP)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want HEAD static asset route", appFile)
 	}
 
 	appTestFile := readFile(t, filepath.Join(destination, "internal", "app", "app_test.go"))
 	if !strings.Contains(appTestFile, `New(WithStaticRoot(staticRoot))`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app_test.go = %q, want static root test", appTestFile)
+	}
+	if !strings.Contains(appTestFile, `http.StatusMethodNotAllowed`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app_test.go = %q, want non-GET asset method assertion", appTestFile)
 	}
 
 	homeFile := readFile(t, filepath.Join(destination, "internal", "handlers", "home.go"))

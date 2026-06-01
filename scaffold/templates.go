@@ -89,7 +89,9 @@ func New(opts ...Option) *ohm.App {
 	logger := slog.New(scrub.NewHandler(slog.NewJSONHandler(os.Stderr, nil)))
 	application := ohm.New()
 	application.Use(ohm.RequestLogger(logger), ohm.Recoverer(logger))
-	application.ChiRouter().Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.staticRoot))))
+	assets := http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.staticRoot)))
+	application.ChiRouter().Get("/assets/*", assets.ServeHTTP)
+	application.ChiRouter().Head("/assets/*", assets.ServeHTTP)
 	handlers.Register(application)
 	return application
 }
@@ -135,6 +137,15 @@ func TestNewServesStaticAssets(t *testing.T) {
 	}
 	if got := response.Body.String(); got != "body { color: black; }\n" {
 		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) body = %q, want static asset", staticRoot, request.Method, request.URL.Path, got)
+	}
+
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/assets/app.css", nil)
+
+	application.ServeHTTP(response, request)
+
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) status = %d, want %d", staticRoot, request.Method, request.URL.Path, response.Code, http.StatusMethodNotAllowed)
 	}
 }
 
