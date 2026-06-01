@@ -3,12 +3,15 @@ package replay
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -134,6 +137,12 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 		body, omitted, err := captureBody(r, cfg.bodyLimit)
 		if err != nil {
 			return Snapshot{}, fmt.Errorf("capture request body: %w", err)
+		}
+		if !omitted {
+			body, omitted, err = scrubBody(cfg.redactor, r.Header.Get("Content-Type"), body)
+			if err != nil {
+				return Snapshot{}, fmt.Errorf("scrub request body: %w", err)
+			}
 		}
 		snapshot.Body = body
 		snapshot.BodyOmitted = omitted
@@ -268,6 +277,44 @@ func bodyWithPrefix(body io.ReadCloser, prefix []byte) io.ReadCloser {
 	}{
 		Reader: io.MultiReader(bytes.NewReader(prefix), body),
 		Closer: body,
+	}
+}
+
+func scrubBody(redactor *scrub.Redactor, contentType string, body []byte) ([]byte, bool, error) {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, true, nil
+	}
+
+	switch {
+	case mediaType == "application/x-www-form-urlencoded":
+		values, err := url.ParseQuery(string(body))
+		if err != nil {
+			return nil, true, nil
+		}
+		return []byte(url.Values(scrubValues(redactor, values)).Encode()), false, nil
+	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
+		var value any
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.UseNumber()
+		if err := decoder.Decode(&value); err != nil {
+			return nil, true, nil
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			return nil, true, nil
+		}
+		switch value.(type) {
+		case map[string]any, []any:
+		default:
+			return nil, true, nil
+		}
+		scrubbed, err := json.Marshal(redactor.Any("", value))
+		if err != nil {
+			return nil, false, err
+		}
+		return scrubbed, false, nil
+	default:
+		return nil, true, nil
 	}
 }
 

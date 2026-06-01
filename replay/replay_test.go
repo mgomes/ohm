@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,7 @@ func TestCaptureScrubsSnapshotAndOmitsBody(t *testing.T) {
 
 func TestCaptureCapturesBodyWithinLimitAndRestoresRequestBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("title=hello"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	got, err := Capture(request, WithBodyLimit(64))
 	if err != nil {
@@ -85,8 +87,89 @@ func TestCaptureCapturesBodyWithinLimitAndRestoresRequestBody(t *testing.T) {
 	}
 }
 
+func TestCaptureScrubsFormBodyBeforeStoringSnapshot(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=ada&password=secret&token=abc"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	got, err := Capture(request, WithBodyLimit(128))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(128)) error = %v, want nil", err)
+	}
+
+	if bytes.Contains(got.Body, []byte("secret")) || bytes.Contains(got.Body, []byte("abc")) {
+		t.Fatalf("Capture(request, WithBodyLimit(128)) Body = %q, want sensitive values redacted", got.Body)
+	}
+	values, err := url.ParseQuery(string(got.Body))
+	if err != nil {
+		t.Fatalf("url.ParseQuery(%q) error = %v, want nil", got.Body, err)
+	}
+	if values.Get("username") != "ada" {
+		t.Errorf("scrubbed form username = %q, want %q", values.Get("username"), "ada")
+	}
+	if values.Get("password") != "[REDACTED]" {
+		t.Errorf("scrubbed form password = %q, want [REDACTED]", values.Get("password"))
+	}
+	if values.Get("token") != "[REDACTED]" {
+		t.Errorf("scrubbed form token = %q, want [REDACTED]", values.Get("token"))
+	}
+}
+
+func TestCaptureScrubsJSONBodyBeforeStoringSnapshot(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"username":"ada","token":"secret","nested":{"password":"hidden"}}`))
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	got, err := Capture(request, WithBodyLimit(128))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(128)) error = %v, want nil", err)
+	}
+
+	if bytes.Contains(got.Body, []byte("secret")) || bytes.Contains(got.Body, []byte("hidden")) {
+		t.Fatalf("Capture(request, WithBodyLimit(128)) Body = %q, want sensitive values redacted", got.Body)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(got.Body, &body); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", got.Body, err)
+	}
+	if body["username"] != "ada" {
+		t.Errorf("scrubbed JSON username = %v, want %q", body["username"], "ada")
+	}
+	if body["token"] != "[REDACTED]" {
+		t.Errorf("scrubbed JSON token = %v, want [REDACTED]", body["token"])
+	}
+	nested := body["nested"].(map[string]any)
+	if nested["password"] != "[REDACTED]" {
+		t.Errorf("scrubbed JSON nested password = %v, want [REDACTED]", nested["password"])
+	}
+}
+
+func TestCaptureOmitsUnsupportedBodyContentTypes(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("secret"))
+	request.Header.Set("Content-Type", "text/plain")
+
+	got, err := Capture(request, WithBodyLimit(64))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(64)) error = %v, want nil", err)
+	}
+
+	if !got.BodyOmitted {
+		t.Errorf("Capture(request, WithBodyLimit(64)) BodyOmitted = false, want true")
+	}
+	if len(got.Body) != 0 {
+		t.Errorf("Capture(request, WithBodyLimit(64)) Body = %q, want empty", got.Body)
+	}
+
+	restored, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("io.ReadAll(restored request body) error = %v, want nil", err)
+	}
+	if string(restored) != "secret" {
+		t.Errorf("restored request body = %q, want %q", restored, "secret")
+	}
+}
+
 func TestCaptureOmitsBodyOverLimitAndRestoresRequestBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("abcdef"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	got, err := Capture(request, WithBodyLimit(3))
 	if err != nil {
