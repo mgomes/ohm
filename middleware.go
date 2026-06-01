@@ -156,6 +156,12 @@ func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) 
 				return next(src)
 			}
 		},
+		Flush: func(next httpsnoop.FlushFunc) httpsnoop.FlushFunc {
+			return func() {
+				state.mark(http.StatusOK)
+				next()
+			}
+		},
 	})
 	return wrapped, state
 }

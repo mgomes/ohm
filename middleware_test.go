@@ -234,6 +234,7 @@ func TestRecovererDoesNotWriteAfterCommittedResponse(t *testing.T) {
 		name       string
 		write      func(http.ResponseWriter)
 		wantStatus int
+		wantBody   string
 	}{
 		{
 			name: "explicit status",
@@ -242,6 +243,7 @@ func TestRecovererDoesNotWriteAfterCommittedResponse(t *testing.T) {
 				_, _ = w.Write([]byte("partial"))
 			},
 			wantStatus: http.StatusAccepted,
+			wantBody:   "partial",
 		},
 		{
 			name: "implicit status",
@@ -249,6 +251,15 @@ func TestRecovererDoesNotWriteAfterCommittedResponse(t *testing.T) {
 				_, _ = w.Write([]byte("partial"))
 			},
 			wantStatus: http.StatusOK,
+			wantBody:   "partial",
+		},
+		{
+			name: "flushed headers",
+			write: func(w http.ResponseWriter) {
+				w.(http.Flusher).Flush()
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "",
 		},
 	}
 	for _, tt := range tests {
@@ -271,8 +282,8 @@ func TestRecovererDoesNotWriteAfterCommittedResponse(t *testing.T) {
 			if res.Code != tt.wantStatus {
 				t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, tt.wantStatus)
 			}
-			if res.Body.String() != "partial" {
-				t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "partial")
+			if res.Body.String() != tt.wantBody {
+				t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), tt.wantBody)
 			}
 
 			var got map[string]any
