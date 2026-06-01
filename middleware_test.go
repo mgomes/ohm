@@ -1,9 +1,11 @@
 package ohm
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -335,6 +337,49 @@ func TestRecovererRendersWhenWriteHeaderPanicsBeforeCommit(t *testing.T) {
 	}
 }
 
+func TestRecovererDoesNotWriteAfterHijack(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	app := New()
+	app.Use(Recoverer(logger))
+	app.Get("/hijack", func(req *Request) error {
+		hijacker, ok := req.ResponseWriter().(http.Hijacker)
+		if !ok {
+			panic("response writer cannot hijack")
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			panic(err)
+		}
+		_ = conn.Close()
+		panic("boom")
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/hijack", nil)
+	res := newHijackRecorder(t)
+
+	app.ServeHTTP(res, request)
+
+	if !res.hijacked {
+		t.Fatalf("App.ServeHTTP(%s %s) hijacked = false, want true", request.Method, request.URL.Path)
+	}
+	if res.body.String() != "" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want empty", request.Method, request.URL.Path, res.body.String())
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", buf.String(), err)
+	}
+	if got["status"] != float64(http.StatusSwitchingProtocols) {
+		t.Errorf("panic log status = %v, want %d", got["status"], http.StatusSwitchingProtocols)
+	}
+	if got["response_committed"] != true {
+		t.Errorf("panic log response_committed = %v, want true", got["response_committed"])
+	}
+}
+
 func TestRecovererRendersAfterInformationalResponse(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
@@ -433,4 +478,32 @@ func (r *informationalRecorder) WriteHeader(status int) {
 		return
 	}
 	r.status = status
+}
+
+type hijackRecorder struct {
+	*informationalRecorder
+	hijacked bool
+	peer     net.Conn
+}
+
+func newHijackRecorder(t *testing.T) *hijackRecorder {
+	t.Helper()
+
+	recorder := &hijackRecorder{
+		informationalRecorder: newInformationalRecorder(),
+	}
+	t.Cleanup(func() {
+		if recorder.peer != nil {
+			_ = recorder.peer.Close()
+		}
+	})
+	return recorder
+}
+
+func (r *hijackRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	server, client := net.Pipe()
+	r.peer = server
+	r.hijacked = true
+	rw := bufio.NewReadWriter(bufio.NewReader(client), bufio.NewWriter(client))
+	return client, rw, nil
 }

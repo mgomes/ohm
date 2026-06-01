@@ -1,12 +1,14 @@
 package ohm
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -166,6 +168,15 @@ func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) 
 				state.mark(http.StatusOK)
 			}
 		},
+		Hijack: func(next httpsnoop.HijackFunc) httpsnoop.HijackFunc {
+			return func() (net.Conn, *bufio.ReadWriter, error) {
+				conn, rw, err := next()
+				if err == nil && !state.committed() {
+					state.mark(http.StatusSwitchingProtocols)
+				}
+				return conn, rw, err
+			}
+		},
 	})
 	return wrapped, state
 }
@@ -183,7 +194,7 @@ func (s *responseState) committed() bool {
 }
 
 func finalStatus(code int) bool {
-	return code >= 200
+	return code == http.StatusSwitchingProtocols || code >= 200
 }
 
 func routePattern(r *http.Request) string {
