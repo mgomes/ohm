@@ -143,6 +143,10 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 			if err != nil {
 				return Snapshot{}, fmt.Errorf("scrub request body: %w", err)
 			}
+			if !omitted && int64(len(body)) > cfg.bodyLimit {
+				body = nil
+				omitted = true
+			}
 		}
 		snapshot.Body = body
 		snapshot.BodyOmitted = omitted

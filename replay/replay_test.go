@@ -142,6 +142,23 @@ func TestCaptureScrubsJSONBodyBeforeStoringSnapshot(t *testing.T) {
 	}
 }
 
+func TestCaptureOmitsBodyWhenScrubbingExceedsLimit(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"token":"x"}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	got, err := Capture(request, WithBodyLimit(13))
+	if err != nil {
+		t.Fatalf("Capture(request, WithBodyLimit(13)) error = %v, want nil", err)
+	}
+
+	if !got.BodyOmitted {
+		t.Errorf("Capture(request, WithBodyLimit(13)) BodyOmitted = false, want true")
+	}
+	if len(got.Body) != 0 {
+		t.Errorf("Capture(request, WithBodyLimit(13)) Body = %q, want empty", got.Body)
+	}
+}
+
 func TestCaptureOmitsUnsupportedBodyContentTypes(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("secret"))
 	request.Header.Set("Content-Type", "text/plain")
