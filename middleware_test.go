@@ -168,18 +168,19 @@ func TestRecovererLogsRedactedPanicAndRendersInternalServerError(t *testing.T) {
 	}
 
 	want := map[string]any{
-		"level":          "ERROR",
-		"msg":            "panic",
-		"request_id":     "req-panic",
-		"method":         http.MethodGet,
-		"path":           "/panic/42",
-		"status":         float64(http.StatusInternalServerError),
-		"remote_addr":    "192.0.2.20:4321",
-		"user_agent":     "panic-test",
-		"content_length": float64(0),
-		"route_pattern":  "/panic/{id}",
-		"panic_type":     "map[string]string",
-		"panic":          "[REDACTED]",
+		"level":              "ERROR",
+		"msg":                "panic",
+		"request_id":         "req-panic",
+		"method":             http.MethodGet,
+		"path":               "/panic/42",
+		"status":             float64(http.StatusInternalServerError),
+		"remote_addr":        "192.0.2.20:4321",
+		"user_agent":         "panic-test",
+		"content_length":     float64(0),
+		"route_pattern":      "/panic/{id}",
+		"response_committed": false,
+		"panic_type":         "map[string]string",
+		"panic":              "[REDACTED]",
 	}
 	for key, wantValue := range want {
 		if got[key] != wantValue {
@@ -225,6 +226,66 @@ func TestRecovererLetsRequestLoggerRecordRecoveredStatus(t *testing.T) {
 	}
 	if got["request_id"] == "" {
 		t.Errorf("request log request_id = empty, want generated request id")
+	}
+}
+
+func TestRecovererDoesNotWriteAfterCommittedResponse(t *testing.T) {
+	tests := []struct {
+		name       string
+		write      func(http.ResponseWriter)
+		wantStatus int
+	}{
+		{
+			name: "explicit status",
+			write: func(w http.ResponseWriter) {
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte("partial"))
+			},
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name: "implicit status",
+			write: func(w http.ResponseWriter) {
+				_, _ = w.Write([]byte("partial"))
+			},
+			wantStatus: http.StatusOK,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+			app := New()
+			app.Use(Recoverer(logger))
+			app.Get("/partial", func(req *Request) error {
+				tt.write(req.ResponseWriter())
+				panic("boom")
+			})
+
+			request := httptest.NewRequest(http.MethodGet, "/partial", nil)
+			res := httptest.NewRecorder()
+
+			app.ServeHTTP(res, request)
+
+			if res.Code != tt.wantStatus {
+				t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, tt.wantStatus)
+			}
+			if res.Body.String() != "partial" {
+				t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "partial")
+			}
+
+			var got map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+				t.Fatalf("json.Unmarshal(%q) error = %v, want nil", buf.String(), err)
+			}
+			if got["status"] != float64(tt.wantStatus) {
+				t.Errorf("panic log status = %v, want %d", got["status"], tt.wantStatus)
+			}
+			if got["response_committed"] != true {
+				t.Errorf("panic log response_committed = %v, want true", got["response_committed"])
+			}
+		})
 	}
 }
 

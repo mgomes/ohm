@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -53,6 +54,7 @@ func Recoverer(logger *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r, requestID := ensureRequestID(w, r)
+			tracked, state := trackResponse(w)
 			start := time.Now()
 
 			defer func() {
@@ -64,19 +66,29 @@ func Recoverer(logger *slog.Logger) Middleware {
 					panic(recovered)
 				}
 
-				attrs := requestLogAttrs(r, requestID, http.StatusInternalServerError, time.Since(start))
+				committed := state.committed()
+				status := http.StatusInternalServerError
+				if committed {
+					status = state.status
+				}
+
+				attrs := requestLogAttrs(r, requestID, status, time.Since(start))
 				attrs = append(attrs,
+					slog.Bool("response_committed", committed),
 					slog.String("panic_type", fmt.Sprintf("%T", recovered)),
 					slog.Any("panic", redactedPanic(recovered)),
 					slog.String("stack", string(debug.Stack())),
 				)
 				logger.LogAttrs(r.Context(), slog.LevelError, "panic", attrs...)
 
+				if committed {
+					return
+				}
 				render.Status(r, http.StatusInternalServerError)
-				render.PlainText(w, r, http.StatusText(http.StatusInternalServerError))
+				render.PlainText(tracked, r, http.StatusText(http.StatusInternalServerError))
 			}()
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(tracked, r)
 		})
 	}
 }
@@ -116,6 +128,48 @@ func requestLogAttrs(r *http.Request, requestID string, status int, duration tim
 
 func redactedPanic(value any) any {
 	return scrub.New().Any("", scrub.Mark(value))
+}
+
+type responseState struct {
+	status  int
+	written bool
+}
+
+func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) {
+	state := &responseState{status: http.StatusOK}
+	wrapped := httpsnoop.Wrap(w, httpsnoop.Hooks{
+		WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
+			return func(code int) {
+				state.mark(code)
+				next(code)
+			}
+		},
+		Write: func(next httpsnoop.WriteFunc) httpsnoop.WriteFunc {
+			return func(body []byte) (int, error) {
+				state.mark(http.StatusOK)
+				return next(body)
+			}
+		},
+		ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
+			return func(src io.Reader) (int64, error) {
+				state.mark(http.StatusOK)
+				return next(src)
+			}
+		},
+	})
+	return wrapped, state
+}
+
+func (s *responseState) mark(status int) {
+	if s.written {
+		return
+	}
+	s.status = status
+	s.written = true
+}
+
+func (s *responseState) committed() bool {
+	return s != nil && s.written
 }
 
 func routePattern(r *http.Request) string {
