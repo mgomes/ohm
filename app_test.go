@@ -1,11 +1,16 @@
 package ohm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/a-h/templ"
 )
 
 func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
@@ -99,6 +104,104 @@ func TestRequestNoContentRendersNoContent(t *testing.T) {
 	}
 	if res.Body.String() != "" {
 		t.Errorf("App.ServeHTTP(%s %s) body = %q, want empty", request.Method, request.URL.Path, res.Body.String())
+	}
+}
+
+func TestRequestHTMLRendersTemplComponent(t *testing.T) {
+	app := New()
+	app.Get("/", func(req *Request) error {
+		return req.HTML(http.StatusCreated, templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+			_, err := io.WriteString(w, "<h1>Welcome</h1>")
+			return err
+		}))
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusCreated {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusCreated)
+	}
+	if got := res.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/html; charset=utf-8")
+	}
+	if res.Body.String() != "<h1>Welcome</h1>" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "<h1>Welcome</h1>")
+	}
+}
+
+func TestRequestHTMLReturnsComponentErrorBeforeWritingResponse(t *testing.T) {
+	componentErr := errors.New("template exploded")
+	var gotErr error
+	app := New(WithErrorHandler(func(req *Request, err error) {
+		gotErr = err
+		req.PlainText(http.StatusInternalServerError, "handled")
+	}))
+	app.Get("/", func(req *Request) error {
+		return req.HTML(http.StatusOK, templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+			if _, err := io.WriteString(w, "partial"); err != nil {
+				return err
+			}
+			return componentErr
+		}))
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	app.ServeHTTP(res, request)
+
+	if !errors.Is(gotErr, componentErr) {
+		t.Errorf("App.ServeHTTP(%s %s) error = %v, want wrapped %v", request.Method, request.URL.Path, gotErr, componentErr)
+	}
+	if res.Code != http.StatusInternalServerError {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusInternalServerError)
+	}
+	if res.Body.String() != "handled" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "handled")
+	}
+}
+
+func TestRequestHTMLRejectsInvalidResponse(t *testing.T) {
+	var gotErr error
+	app := New(WithErrorHandler(func(req *Request, err error) {
+		gotErr = err
+		req.PlainText(http.StatusInternalServerError, "handled")
+	}))
+	app.Get("/nil", func(req *Request) error {
+		return req.HTML(http.StatusOK, nil)
+	})
+	app.Get("/status", func(req *Request) error {
+		return req.HTML(0, templ.ComponentFunc(func(context.Context, io.Writer) error {
+			return nil
+		}))
+	})
+
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/nil", want: "html component is required"},
+		{path: "/status", want: "html status code 0 is invalid"},
+	}
+	for _, tt := range tests {
+		gotErr = nil
+		res := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, tt.path, nil)
+
+		app.ServeHTTP(res, request)
+
+		if gotErr == nil || !strings.Contains(gotErr.Error(), tt.want) {
+			t.Errorf("App.ServeHTTP(%s %s) error = %v, want containing %q", request.Method, request.URL.Path, gotErr, tt.want)
+		}
+		if res.Code != http.StatusInternalServerError {
+			t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusInternalServerError)
+		}
+		if res.Body.String() != "handled" {
+			t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "handled")
+		}
 	}
 }
 

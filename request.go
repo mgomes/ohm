@@ -1,9 +1,12 @@
 package ohm
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 
+	"github.com/a-h/templ"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 )
@@ -60,6 +63,25 @@ func (r *Request) Decode(v any) error {
 // Render renders a chi/render response.
 func (r *Request) Render(v render.Renderer) error {
 	return render.Render(r.w, r.r, v)
+}
+
+// HTML renders a templ component as HTML with status.
+func (r *Request) HTML(status int, component templ.Component) error {
+	if component == nil {
+		return fmt.Errorf("html component is required")
+	}
+	if status < 100 || status > 999 {
+		return fmt.Errorf("html status code %d is invalid", status)
+	}
+
+	var body bytes.Buffer
+	if err := component.Render(r.Context(), &body); err != nil {
+		return fmt.Errorf("render html component: %w", err)
+	}
+
+	render.Status(r.r, status)
+	render.HTML(r.w, r.r, body.String())
+	return nil
 }
 
 // JSON renders v as JSON with status.
