@@ -34,6 +34,7 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/db/db.go",
 		"internal/db/db_test.go",
 		"internal/db/dbgen/README.md",
+		"internal/db/migrate_test.go",
 		"internal/db/seeds.go",
 		"internal/handlers/home.go",
 		"internal/handlers/home_test.go",
@@ -104,6 +105,14 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	dbTest := readFile(t, filepath.Join(destination, "internal", "db", "db_test.go"))
 	if !strings.Contains(dbTest, `t.Setenv("DATABASE_URL", "file:test.db")`) {
 		t.Errorf("GenerateApp(sqlite app) internal/db/db_test.go = %q, want test database URL", dbTest)
+	}
+
+	migrateTest := readFile(t, filepath.Join(destination, "internal", "db", "migrate_test.go"))
+	if !strings.Contains(migrateTest, `databaseURL := "file:" + filepath.Join(t.TempDir(), "migrate.db")`) {
+		t.Errorf("GenerateApp(sqlite app) internal/db/migrate_test.go = %q, want local SQLite migration test", migrateTest)
+	}
+	if !strings.Contains(migrateTest, `command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"up"})`) {
+		t.Errorf("GenerateApp(sqlite app) internal/db/migrate_test.go = %q, want migrate up command assertion", migrateTest)
 	}
 
 	justfile := readFile(t, filepath.Join(destination, "justfile"))
@@ -225,6 +234,10 @@ func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
 	dbCommandTest := readFile(t, filepath.Join(destination, "internal", "db", "command_test.go"))
 	if !strings.Contains(dbCommandTest, `t.Skip("db seed integration test requires a configured Postgres test database")`) {
 		t.Errorf("GenerateApp(default app) internal/db/command_test.go = %q, want explicit Postgres seed test skip", dbCommandTest)
+	}
+	migrateTest := readFile(t, filepath.Join(destination, "internal", "db", "migrate_test.go"))
+	if !strings.Contains(migrateTest, `t.Skip("migration integration test requires a configured Postgres test database")`) {
+		t.Errorf("GenerateApp(default app) internal/db/migrate_test.go = %q, want explicit Postgres migration test skip", migrateTest)
 	}
 
 	sqlcConfig := readFile(t, filepath.Join(destination, "sqlc.yaml"))
