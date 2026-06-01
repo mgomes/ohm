@@ -62,6 +62,38 @@ func TestCaptureScrubsSnapshotAndOmitsBody(t *testing.T) {
 	}
 }
 
+func TestCaptureIncludesScrubbedRouteParams(t *testing.T) {
+	app := ohm.New()
+	var got Snapshot
+	var captureErr error
+	app.Get("/posts/{id}/tokens/{token}", func(req *ohm.Request) error {
+		got, captureErr = Capture(req.HTTPRequest())
+		req.PlainText(http.StatusOK, "ok")
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/posts/42/tokens/secret", nil)
+	response := httptest.NewRecorder()
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+	if captureErr != nil {
+		t.Fatalf("Capture(request) error = %v, want nil", captureErr)
+	}
+	if got.RoutePattern != "/posts/{id}/tokens/{token}" {
+		t.Errorf("Capture(request) RoutePattern = %q, want %q", got.RoutePattern, "/posts/{id}/tokens/{token}")
+	}
+	if got.RouteParams["id"] != "42" {
+		t.Errorf("Capture(request) route param id = %q, want %q", got.RouteParams["id"], "42")
+	}
+	if got.RouteParams["token"] != "[REDACTED]" {
+		t.Errorf("Capture(request) route param token = %q, want [REDACTED]", got.RouteParams["token"])
+	}
+}
+
 func TestCaptureCapturesBodyWithinLimitAndRestoresRequestBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("title=hello"))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
