@@ -43,8 +43,45 @@ func New(opts ...Option) *cli.Program {
 	}
 
 	return cli.New("ohm", []cli.Command{
+		generateCommand(),
 		newCommand(cfg.ohmVersion),
 	}, cli.WithIO(cfg.io))
+}
+
+func generateCommand() cli.Command {
+	return cli.Command{
+		Name:    "generate",
+		Summary: "generate application code",
+		Usage:   "generate <migration> [args]",
+		Run: func(_ context.Context, commandIO cli.IO, args []string) error {
+			commandIO = withIODefaults(commandIO)
+			if len(args) == 0 {
+				return fmt.Errorf("%w: generate requires a generator name", cli.ErrUsage)
+			}
+			if isHelpArg(args[0]) {
+				return cli.ErrHelp
+			}
+
+			switch args[0] {
+			case "migration":
+				parsed, err := parseMigrationArgs(args[1:])
+				if err != nil {
+					return err
+				}
+				path, err := scaffold.GenerateMigration(scaffold.Migration{
+					Name: parsed.name,
+					Dir:  parsed.dir,
+				})
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(commandIO.Stdout, "Created %s\n", path)
+				return nil
+			default:
+				return fmt.Errorf("%w: unknown generator %q", cli.ErrUsage, args[0])
+			}
+		},
+	}
 }
 
 func newCommand(defaultOhmVersion string) cli.Command {
@@ -83,6 +120,44 @@ func newCommand(defaultOhmVersion string) cli.Command {
 			return nil
 		},
 	}
+}
+
+type migrationArgs struct {
+	name string
+	dir  string
+}
+
+func parseMigrationArgs(args []string) (migrationArgs, error) {
+	parsed := migrationArgs{}
+	var positionals []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case isHelpArg(arg):
+			return migrationArgs{}, cli.ErrHelp
+		case arg == "-dir" || arg == "--dir":
+			value, ok := nextArg(args, &i)
+			if !ok {
+				return migrationArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
+			}
+			parsed.dir = value
+		case strings.HasPrefix(arg, "-dir="):
+			parsed.dir = strings.TrimPrefix(arg, "-dir=")
+		case strings.HasPrefix(arg, "--dir="):
+			parsed.dir = strings.TrimPrefix(arg, "--dir=")
+		case strings.HasPrefix(arg, "-"):
+			return migrationArgs{}, fmt.Errorf("%w: unknown migration flag %q", cli.ErrUsage, arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+
+	if len(positionals) != 1 {
+		return migrationArgs{}, fmt.Errorf("%w: migration requires exactly one name", cli.ErrUsage)
+	}
+	parsed.name = positionals[0]
+	return parsed, nil
 }
 
 type newArgs struct {
