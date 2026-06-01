@@ -40,6 +40,8 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/db/seeds.go",
 		"internal/handlers/home.go",
 		"internal/handlers/home_test.go",
+		"internal/views/assets/assets.go",
+		"internal/views/assets/assets_test.go",
 		"internal/views/components/README.md",
 		"internal/views/layouts/application.templ",
 		"internal/views/layouts/application_templ.go",
@@ -49,6 +51,7 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"migrations/README.md",
 		"queries/health.sql",
 		"sqlc.yaml",
+		"static/app.css",
 		"static/README.md",
 		"justfile",
 	}
@@ -180,6 +183,20 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(appFile, "ohm.RequestLogger(logger), ohm.Recoverer(logger)") {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want recovery middleware after request logger", appFile)
 	}
+	if !strings.Contains(appFile, `application.ChiRouter().Get("/assets/*", assets.ServeHTTP)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want GET static asset route", appFile)
+	}
+	if !strings.Contains(appFile, `application.ChiRouter().Head("/assets/*", assets.ServeHTTP)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want HEAD static asset route", appFile)
+	}
+
+	appTestFile := readFile(t, filepath.Join(destination, "internal", "app", "app_test.go"))
+	if !strings.Contains(appTestFile, `New(WithStaticRoot(staticRoot))`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app_test.go = %q, want static root test", appTestFile)
+	}
+	if !strings.Contains(appTestFile, `http.StatusMethodNotAllowed`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app_test.go = %q, want non-GET asset method assertion", appTestFile)
+	}
 
 	homeFile := readFile(t, filepath.Join(destination, "internal", "handlers", "home.go"))
 	if !strings.Contains(homeFile, `"example.com/journal/internal/views/pages"`) {
@@ -194,14 +211,18 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/pages/home.templ = %q, want application layout", homeView)
 	}
 
-	appTest := readFile(t, filepath.Join(destination, "internal", "app", "app_test.go"))
-	if !strings.Contains(appTest, `hasRoute(routes, "GET", "/")`) {
-		t.Errorf("GenerateApp(sqlite app) internal/app/app_test.go = %q, want home route smoke test", appTest)
+	if !strings.Contains(appTestFile, `hasRoute(routes, "GET", "/")`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app_test.go = %q, want home route smoke test", appTestFile)
 	}
 
 	viewTest := readFile(t, filepath.Join(destination, "internal", "views", "pages", "home_test.go"))
 	if !strings.Contains(viewTest, `<h1>Welcome to Journal</h1>`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/pages/home_test.go = %q, want rendered view assertion", viewTest)
+	}
+
+	assetHelper := readFile(t, filepath.Join(destination, "internal", "views", "assets", "assets.go"))
+	if !strings.Contains(assetHelper, `const basePath = "/assets/"`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/assets/assets.go = %q, want asset path helper", assetHelper)
 	}
 }
 

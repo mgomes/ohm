@@ -55,6 +55,7 @@ func run(ctx context.Context, args []string) error {
 
 import (
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/mgomes/ohm"
@@ -63,10 +64,34 @@ import (
 	"{{.Module}}/internal/handlers"
 )
 
-func New() *ohm.App {
+type Option func(*options)
+
+type options struct {
+	staticRoot string
+}
+
+func WithStaticRoot(root string) Option {
+	return func(opts *options) {
+		if root != "" {
+			opts.staticRoot = root
+		}
+	}
+}
+
+func New(opts ...Option) *ohm.App {
+	cfg := options{
+		staticRoot: "static",
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	logger := slog.New(scrub.NewHandler(slog.NewJSONHandler(os.Stderr, nil)))
 	application := ohm.New()
 	application.Use(ohm.RequestLogger(logger), ohm.Recoverer(logger))
+	assets := http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.staticRoot)))
+	application.ChiRouter().Get("/assets/*", assets.ServeHTTP)
+	application.ChiRouter().Head("/assets/*", assets.ServeHTTP)
 	handlers.Register(application)
 	return application
 }
@@ -74,6 +99,10 @@ func New() *ohm.App {
 	"internal/app/app_test.go": `package app
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/mgomes/ohm"
@@ -88,6 +117,35 @@ func TestNewRegistersHomeRoute(t *testing.T) {
 	}
 	if !hasRoute(routes, "GET", "/") {
 		t.Fatalf("New().Routes() = %+v, want GET /", routes)
+	}
+}
+
+func TestNewServesStaticAssets(t *testing.T) {
+	staticRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staticRoot, "app.css"), []byte("body { color: black; }\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(static asset) error = %v, want nil", err)
+	}
+
+	application := New(WithStaticRoot(staticRoot))
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
+
+	application.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) status = %d, want %d", staticRoot, request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+	if got := response.Body.String(); got != "body { color: black; }\n" {
+		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) body = %q, want static asset", staticRoot, request.Method, request.URL.Path, got)
+	}
+
+	response = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/assets/app.css", nil)
+
+	application.ServeHTTP(response, request)
+
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) status = %d, want %d", staticRoot, request.Method, request.URL.Path, response.Code, http.StatusMethodNotAllowed)
 	}
 }
 
@@ -632,6 +690,53 @@ var _ = templruntime.GeneratedTemplate
 
 Place reusable templ components here.
 `,
+	"internal/views/assets/assets.go": `package assets
+
+import (
+	"net/url"
+	"path"
+	"strings"
+)
+
+const basePath = "/assets/"
+
+func Path(name string) string {
+	cleaned := path.Clean("/" + strings.TrimPrefix(name, "/"))
+	if cleaned == "/" {
+		return basePath
+	}
+
+	parts := strings.Split(strings.TrimPrefix(cleaned, "/"), "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return basePath + strings.Join(parts, "/")
+}
+`,
+	"internal/views/assets/assets_test.go": `package assets
+
+import "testing"
+
+func TestPathBuildsAssetURL(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "", want: "/assets/"},
+		{name: "app.css", want: "/assets/app.css"},
+		{name: "/icons/logo.svg", want: "/assets/icons/logo.svg"},
+		{name: "icons/../app.css", want: "/assets/app.css"},
+		{name: "avatars/Jane Doe.png", want: "/assets/avatars/Jane%20Doe.png"},
+	}
+
+	for _, tt := range tests {
+		got := Path(tt.name)
+		if got != tt.want {
+			t.Errorf("Path(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+`,
 	"migrations/README.md": `# Migrations
 
 This app uses goose migrations against {{.DatabaseSummary}}.
@@ -717,6 +822,11 @@ sql:
 	"static/README.md": `# Static Assets
 
 Place application static assets here.
+`,
+	"static/app.css": `body {
+	margin: 2rem;
+	font-family: system-ui, sans-serif;
+}
 `,
 	"justfile": `set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
