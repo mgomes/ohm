@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/mgomes/ohm/cli"
 )
@@ -16,13 +18,14 @@ func Command(handler http.Handler) cli.Command {
 	return cli.Command{
 		Name:    "replay",
 		Summary: "replay a request snapshot",
-		Usage:   "replay <snapshot.json>",
+		Usage:   "replay [--write-expected] <snapshot.json>",
 		Run: func(ctx context.Context, commandIO cli.IO, args []string) error {
-			if len(args) != 1 {
-				return fmt.Errorf("%w: replay requires one snapshot path", cli.ErrUsage)
+			parsed, err := parseArgs(args)
+			if err != nil {
+				return err
 			}
 
-			snapshot, err := readSnapshot(args[0])
+			snapshot, err := readSnapshot(parsed.snapshotPath)
 			if err != nil {
 				return err
 			}
@@ -30,6 +33,19 @@ func Command(handler http.Handler) cli.Command {
 			response, err := run(ctx, handler, snapshot)
 			if err != nil {
 				return fmt.Errorf("run replay: %w", err)
+			}
+			if parsed.writeExpected {
+				expected, err := ExpectedResponseFrom(response)
+				if err != nil {
+					return err
+				}
+				snapshot.ExpectedResponse = &expected
+				if err := writeSnapshotFile(parsed.snapshotPath, snapshot); err != nil {
+					return err
+				}
+				if _, err := fmt.Fprintf(output(commandIO.Stderr), "Updated %s\n", parsed.snapshotPath); err != nil {
+					return fmt.Errorf("write replay update: %w", err)
+				}
 			}
 
 			stdout := output(commandIO.Stdout)
@@ -55,6 +71,33 @@ func Command(handler http.Handler) cli.Command {
 	}
 }
 
+type args struct {
+	snapshotPath  string
+	writeExpected bool
+}
+
+func parseArgs(raw []string) (args, error) {
+	parsed := args{}
+	var positionals []string
+
+	for _, arg := range raw {
+		switch {
+		case arg == "--write-expected" || arg == "-write-expected":
+			parsed.writeExpected = true
+		case strings.HasPrefix(arg, "-"):
+			return args{}, fmt.Errorf("%w: unknown replay flag %q", cli.ErrUsage, arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+
+	if len(positionals) != 1 {
+		return args{}, fmt.Errorf("%w: replay requires one snapshot path", cli.ErrUsage)
+	}
+	parsed.snapshotPath = positionals[0]
+	return parsed, nil
+}
+
 func readSnapshot(path string) (snapshot Snapshot, err error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -70,6 +113,56 @@ func readSnapshot(path string) (snapshot Snapshot, err error) {
 		return Snapshot{}, fmt.Errorf("decode replay snapshot %q: %w", path, err)
 	}
 	return snapshot, nil
+}
+
+func writeSnapshotFile(path string, snapshot Snapshot) (err error) {
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode replay snapshot %q: %w", path, err)
+	}
+	data = append(data, '\n')
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect replay snapshot %q: %w", path, err)
+	}
+
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".")
+	if err != nil {
+		return fmt.Errorf("create temporary replay snapshot for %q: %w", path, err)
+	}
+	tempPath := temp.Name()
+	removeTemp := true
+	closed := false
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	defer func() {
+		if closed {
+			return
+		}
+		if closeErr := temp.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close temporary replay snapshot for %q: %w", path, closeErr)
+		}
+	}()
+
+	if _, err := temp.Write(data); err != nil {
+		return fmt.Errorf("write temporary replay snapshot for %q: %w", path, err)
+	}
+	if err := temp.Chmod(info.Mode().Perm()); err != nil {
+		return fmt.Errorf("chmod temporary replay snapshot for %q: %w", path, err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary replay snapshot for %q: %w", path, err)
+	}
+	closed = true
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("replace replay snapshot %q: %w", path, err)
+	}
+	removeTemp = false
+	return nil
 }
 
 func output(w io.Writer) io.Writer {

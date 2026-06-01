@@ -24,18 +24,32 @@ var defaultHeaders = []string{
 	ohm.RequestIDHeader,
 }
 
+var defaultResponseHeaders = []string{
+	"Content-Type",
+	"Location",
+}
+
 // Snapshot captures enough request data to replay a handler request.
 type Snapshot struct {
-	Version      int                 `json:"version"`
-	Method       string              `json:"method"`
-	Path         string              `json:"path"`
-	Query        map[string][]string `json:"query,omitempty"`
-	Headers      map[string][]string `json:"headers,omitempty"`
-	RequestID    string              `json:"request_id,omitempty"`
-	RoutePattern string              `json:"route_pattern,omitempty"`
-	CapturedAt   time.Time           `json:"captured_at"`
-	Body         []byte              `json:"body,omitempty"`
-	BodyOmitted  bool                `json:"body_omitted"`
+	Version          int                 `json:"version"`
+	Method           string              `json:"method"`
+	Path             string              `json:"path"`
+	Query            map[string][]string `json:"query,omitempty"`
+	Headers          map[string][]string `json:"headers,omitempty"`
+	RequestID        string              `json:"request_id,omitempty"`
+	RoutePattern     string              `json:"route_pattern,omitempty"`
+	CapturedAt       time.Time           `json:"captured_at"`
+	Body             []byte              `json:"body,omitempty"`
+	BodyOmitted      bool                `json:"body_omitted"`
+	ExpectedResponse *ExpectedResponse   `json:"expected_response,omitempty"`
+}
+
+// ExpectedResponse captures the response assertions used by generated replay tests.
+type ExpectedResponse struct {
+	Status      int                 `json:"status"`
+	Headers     map[string][]string `json:"headers,omitempty"`
+	Body        string              `json:"body,omitempty"`
+	BodyOmitted bool                `json:"body_omitted,omitempty"`
 }
 
 // Option configures request snapshot capture.
@@ -133,6 +147,25 @@ func NewRequest(snapshot Snapshot) (*http.Request, error) {
 // Run replays snapshot through handler and returns the response.
 func Run(handler http.Handler, snapshot Snapshot) (*httptest.ResponseRecorder, error) {
 	return run(context.Background(), handler, snapshot)
+}
+
+// ExpectedResponseFrom captures stable response fields from a replay result.
+func ExpectedResponseFrom(response *httptest.ResponseRecorder) (ExpectedResponse, error) {
+	if response == nil {
+		return ExpectedResponse{}, fmt.Errorf("response is required")
+	}
+
+	result := response.Result()
+	expected := ExpectedResponse{
+		Status:  result.StatusCode,
+		Headers: captureHeaders(scrub.New(), result.Header, defaultResponseHeaders),
+	}
+	if response.Body == nil {
+		expected.BodyOmitted = true
+		return expected, nil
+	}
+	expected.Body = response.Body.String()
+	return expected, nil
 }
 
 func run(ctx context.Context, handler http.Handler, snapshot Snapshot) (*httptest.ResponseRecorder, error) {
