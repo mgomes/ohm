@@ -52,7 +52,7 @@ func generateCommand() cli.Command {
 	return cli.Command{
 		Name:    "generate",
 		Summary: "generate application code",
-		Usage:   "generate <migration> [args]",
+		Usage:   "generate <handler|migration> [args]",
 		Run: func(_ context.Context, commandIO cli.IO, args []string) error {
 			commandIO = withIODefaults(commandIO)
 			if len(args) == 0 {
@@ -63,6 +63,25 @@ func generateCommand() cli.Command {
 			}
 
 			switch args[0] {
+			case "handler":
+				parsed, err := parseHandlerArgs(args[1:])
+				if err != nil {
+					return err
+				}
+				result, err := scaffold.GenerateHandler(scaffold.Handler{
+					Name: parsed.name,
+					Dir:  parsed.dir,
+				})
+				if err != nil {
+					return err
+				}
+				for _, path := range result.CreatedFiles {
+					fmt.Fprintf(commandIO.Stdout, "Created %s\n", path)
+				}
+				if result.RegisterUpdated {
+					fmt.Fprintf(commandIO.Stdout, "Updated %s\n", result.RegisterFile)
+				}
+				return nil
 			case "migration":
 				parsed, err := parseMigrationArgs(args[1:])
 				if err != nil {
@@ -122,24 +141,38 @@ func newCommand(defaultOhmVersion string) cli.Command {
 	}
 }
 
-type migrationArgs struct {
+type namedDirArgs struct {
 	name string
 	dir  string
 }
 
+type handlerArgs namedDirArgs
+
+func parseHandlerArgs(args []string) (handlerArgs, error) {
+	parsed, err := parseNamedDirArgs("handler", args)
+	return handlerArgs(parsed), err
+}
+
+type migrationArgs namedDirArgs
+
 func parseMigrationArgs(args []string) (migrationArgs, error) {
-	parsed := migrationArgs{}
+	parsed, err := parseNamedDirArgs("migration", args)
+	return migrationArgs(parsed), err
+}
+
+func parseNamedDirArgs(generator string, args []string) (namedDirArgs, error) {
+	parsed := namedDirArgs{}
 	var positionals []string
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
 		case isHelpArg(arg):
-			return migrationArgs{}, cli.ErrHelp
+			return namedDirArgs{}, cli.ErrHelp
 		case arg == "-dir" || arg == "--dir":
 			value, ok := nextArg(args, &i)
 			if !ok {
-				return migrationArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
+				return namedDirArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
 			}
 			parsed.dir = value
 		case strings.HasPrefix(arg, "-dir="):
@@ -147,14 +180,14 @@ func parseMigrationArgs(args []string) (migrationArgs, error) {
 		case strings.HasPrefix(arg, "--dir="):
 			parsed.dir = strings.TrimPrefix(arg, "--dir=")
 		case strings.HasPrefix(arg, "-"):
-			return migrationArgs{}, fmt.Errorf("%w: unknown migration flag %q", cli.ErrUsage, arg)
+			return namedDirArgs{}, fmt.Errorf("%w: unknown %s flag %q", cli.ErrUsage, generator, arg)
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
 
 	if len(positionals) != 1 {
-		return migrationArgs{}, fmt.Errorf("%w: migration requires exactly one name", cli.ErrUsage)
+		return namedDirArgs{}, fmt.Errorf("%w: %s requires exactly one name", cli.ErrUsage, generator)
 	}
 	parsed.name = positionals[0]
 	return parsed, nil

@@ -74,6 +74,46 @@ func TestGenerateMigrationCommandCreatesMigrationWithFlagsAfterName(t *testing.T
 	}
 }
 
+func TestGenerateHandlerCommandCreatesHandlerWithFlagsAfterName(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "journal")
+	if err := scaffold.GenerateApp(scaffold.App{
+		Destination: destination,
+		Module:      "example.com/journal",
+		Database:    scaffold.DatabaseSQLite,
+		OhmVersion:  "v0.0.0",
+	}); err != nil {
+		t.Fatalf("GenerateApp(journal) error = %v, want nil", err)
+	}
+	t.Chdir(destination)
+
+	var stdout bytes.Buffer
+	program := New(WithIO(cli.IO{Stdout: &stdout}))
+
+	args := []string{"generate", "handler", "Posts", "--dir", "internal/handlers"}
+	err := program.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Program.Run(%v) error = %v, want nil", args, err)
+	}
+
+	postsPath := filepath.Join("internal", "handlers", "posts.go")
+	if _, err := os.Stat(postsPath); err != nil {
+		t.Fatalf("Program.Run(%v) generated %s stat error = %v, want nil", args, postsPath, err)
+	}
+	home, err := os.ReadFile(filepath.Join("internal", "handlers", "home.go"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(generated home.go) error = %v, want nil", err)
+	}
+	if !strings.Contains(string(home), `application.Get("/posts", PostsIndex)`) {
+		t.Errorf("Program.Run(%v) generated home.go = %q, want posts route registration", args, home)
+	}
+	if !strings.Contains(stdout.String(), "Created "+postsPath) {
+		t.Errorf("Program.Run(%v) stdout = %q, want generated handler path", args, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Updated "+filepath.Join("internal", "handlers", "home.go")) {
+		t.Errorf("Program.Run(%v) stdout = %q, want updated register path", args, stdout.String())
+	}
+}
+
 func TestGenerateMigrationCommandRejectsUnknownGenerator(t *testing.T) {
 	program := New()
 
