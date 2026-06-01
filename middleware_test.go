@@ -335,6 +335,44 @@ func TestRecovererRendersWhenWriteHeaderPanicsBeforeCommit(t *testing.T) {
 	}
 }
 
+func TestRecovererRendersAfterInformationalResponse(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	app := New()
+	app.Use(Recoverer(logger))
+	app.Get("/early", func(req *Request) error {
+		req.ResponseWriter().WriteHeader(http.StatusEarlyHints)
+		panic("boom")
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/early", nil)
+	res := newInformationalRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if len(res.informational) != 1 || res.informational[0] != http.StatusEarlyHints {
+		t.Fatalf("App.ServeHTTP(%s %s) informational statuses = %v, want [%d]", request.Method, request.URL.Path, res.informational, http.StatusEarlyHints)
+	}
+	if res.status != http.StatusInternalServerError {
+		t.Fatalf("App.ServeHTTP(%s %s) final status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusInternalServerError)
+	}
+	if res.body.String() != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.body.String(), http.StatusText(http.StatusInternalServerError))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", buf.String(), err)
+	}
+	if got["status"] != float64(http.StatusInternalServerError) {
+		t.Errorf("panic log status = %v, want %d", got["status"], http.StatusInternalServerError)
+	}
+	if got["response_committed"] != false {
+		t.Errorf("panic log response_committed = %v, want false", got["response_committed"])
+	}
+}
+
 func TestRecovererPreservesHTTPAbortHandlerPanic(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
@@ -362,4 +400,37 @@ func TestRecovererPreservesHTTPAbortHandlerPanic(t *testing.T) {
 	if buf.Len() != 0 {
 		t.Errorf("Recoverer(logger) log = %q, want empty for http.ErrAbortHandler", buf.String())
 	}
+}
+
+type informationalRecorder struct {
+	header        http.Header
+	body          bytes.Buffer
+	status        int
+	informational []int
+}
+
+func newInformationalRecorder() *informationalRecorder {
+	return &informationalRecorder{
+		header: make(http.Header),
+		status: http.StatusOK,
+	}
+}
+
+func (r *informationalRecorder) Header() http.Header {
+	return r.header
+}
+
+func (r *informationalRecorder) Write(body []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.body.Write(body)
+}
+
+func (r *informationalRecorder) WriteHeader(status int) {
+	if status >= 100 && status < 200 {
+		r.informational = append(r.informational, status)
+		return
+	}
+	r.status = status
 }

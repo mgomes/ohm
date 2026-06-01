@@ -141,7 +141,9 @@ func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) 
 		WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
 			return func(code int) {
 				next(code)
-				state.mark(code)
+				if finalStatus(code) {
+					state.mark(code)
+				}
 			}
 		},
 		Write: func(next httpsnoop.WriteFunc) httpsnoop.WriteFunc {
@@ -178,6 +180,10 @@ func (s *responseState) mark(status int) {
 
 func (s *responseState) committed() bool {
 	return s != nil && s.written
+}
+
+func finalStatus(code int) bool {
+	return code >= 200
 }
 
 func routePattern(r *http.Request) string {
