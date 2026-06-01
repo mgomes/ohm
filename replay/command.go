@@ -33,11 +33,12 @@ func Command(handler http.Handler) cli.Command {
 			}
 
 			stdout := output(commandIO.Stdout)
-			status := http.StatusText(response.Code)
+			statusCode := response.Result().StatusCode
+			status := http.StatusText(statusCode)
 			if status == "" {
 				status = "Unknown Status"
 			}
-			if _, err := fmt.Fprintf(stdout, "Status: %d %s\n", response.Code, status); err != nil {
+			if _, err := fmt.Fprintf(stdout, "Status: %d %s\n", statusCode, status); err != nil {
 				return fmt.Errorf("write replay status: %w", err)
 			}
 			if response.Body.Len() == 0 {

@@ -71,6 +71,31 @@ func TestCommandPropagatesContextToReplayRequest(t *testing.T) {
 	}
 }
 
+func TestCommandReportsImplicitOKStatus(t *testing.T) {
+	app := ohm.New()
+	app.Get("/empty", func(*ohm.Request) error {
+		return nil
+	})
+
+	path := writeSnapshot(t, Snapshot{
+		Version: snapshotVersion,
+		Method:  http.MethodGet,
+		Path:    "/empty",
+	})
+
+	var stdout bytes.Buffer
+	command := Command(app)
+	err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{path})
+	if err != nil {
+		t.Fatalf("Command(app).Run(ctx, io, %v) error = %v, want nil", []string{path}, err)
+	}
+
+	want := "Status: 200 OK\n"
+	if stdout.String() != want {
+		t.Errorf("Command(app).Run(ctx, io, %v) stdout = %q, want %q", []string{path}, stdout.String(), want)
+	}
+}
+
 func TestCommandRejectsWrongArgumentCount(t *testing.T) {
 	command := Command(http.NewServeMux())
 	err := command.Run(context.Background(), cli.IO{}, nil)
