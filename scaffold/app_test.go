@@ -45,6 +45,8 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/views/assets/assets.go",
 		"internal/views/assets/assets_test.go",
 		"internal/views/components/README.md",
+		"internal/views/forms/forms.go",
+		"internal/views/forms/forms_test.go",
 		"internal/views/layouts/application.templ",
 		"internal/views/layouts/application_templ.go",
 		"internal/views/pages/home.templ",
@@ -233,6 +235,14 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	assetHelper := readFile(t, filepath.Join(destination, "internal", "views", "assets", "assets.go"))
 	if !strings.Contains(assetHelper, `const basePath = "/assets/"`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/assets/assets.go = %q, want asset path helper", assetHelper)
+	}
+
+	formHelper := readFile(t, filepath.Join(destination, "internal", "views", "forms", "forms.go"))
+	if !strings.Contains(formHelper, `type Field struct`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/forms/forms.go = %q, want form field helper", formHelper)
+	}
+	if !strings.Contains(formHelper, `func NewField(name string, label string, values Values, errors Errors) Field`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/forms/forms.go = %q, want form field constructor", formHelper)
 	}
 }
 
