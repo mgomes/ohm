@@ -649,6 +649,60 @@ SELECT 1;
 
 sqlc writes generated query code into this package.
 `,
+	"internal/db/dbtest/dbtest.go": `package dbtest
+
+import (
+	"context"
+	"database/sql"
+{{- if .IsSQLite }}
+	"path/filepath"
+{{- else }}
+	"os"
+{{- end }}
+	"testing"
+
+	"github.com/mgomes/ohm/config"
+
+	"{{.Module}}/internal/db"
+)
+
+func Open(t testing.TB) *sql.DB {
+	t.Helper()
+
+{{- if .IsSQLite }}
+	databaseURL := "file:" + filepath.Join(t.TempDir(), "test.db")
+{{- else }}
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for Postgres database tests")
+	}
+{{- end }}
+	database, err := db.Open(context.Background(), db.Config{URL: config.Secret(databaseURL)})
+	if err != nil {
+		t.Fatalf("db.Open(ctx, cfg) error = %v, want nil", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("db.Close() error = %v, want nil", err)
+		}
+	})
+	return database
+}
+`,
+	"internal/db/dbtest/dbtest_test.go": `package dbtest
+
+import (
+	"context"
+	"testing"
+)
+
+func TestOpenReturnsUsableDatabase(t *testing.T) {
+	database := Open(t)
+	if err := database.PingContext(context.Background()); err != nil {
+		t.Fatalf("Open(t).PingContext(ctx) error = %v, want nil", err)
+	}
+}
+`,
 	"sqlc.yaml": `version: "2"
 sql:
   - engine: "{{.SQLCEngine}}"

@@ -34,6 +34,8 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/db/db.go",
 		"internal/db/db_test.go",
 		"internal/db/dbgen/README.md",
+		"internal/db/dbtest/dbtest.go",
+		"internal/db/dbtest/dbtest_test.go",
 		"internal/db/migrate_test.go",
 		"internal/db/seeds.go",
 		"internal/handlers/home.go",
@@ -105,6 +107,14 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	dbTest := readFile(t, filepath.Join(destination, "internal", "db", "db_test.go"))
 	if !strings.Contains(dbTest, `t.Setenv("DATABASE_URL", "file:test.db")`) {
 		t.Errorf("GenerateApp(sqlite app) internal/db/db_test.go = %q, want test database URL", dbTest)
+	}
+
+	dbTestHelper := readFile(t, filepath.Join(destination, "internal", "db", "dbtest", "dbtest.go"))
+	if !strings.Contains(dbTestHelper, `databaseURL := "file:" + filepath.Join(t.TempDir(), "test.db")`) {
+		t.Errorf("GenerateApp(sqlite app) internal/db/dbtest/dbtest.go = %q, want isolated SQLite database helper", dbTestHelper)
+	}
+	if !strings.Contains(dbTestHelper, `"example.com/journal/internal/db"`) {
+		t.Errorf("GenerateApp(sqlite app) internal/db/dbtest/dbtest.go = %q, want generated db package import", dbTestHelper)
 	}
 
 	migrateTest := readFile(t, filepath.Join(destination, "internal", "db", "migrate_test.go"))
@@ -229,6 +239,11 @@ func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
 	dbTest := readFile(t, filepath.Join(destination, "internal", "db", "db_test.go"))
 	if !strings.Contains(dbTest, `t.Setenv("DATABASE_URL", "postgres://localhost/test?sslmode=disable")`) {
 		t.Errorf("GenerateApp(default app) internal/db/db_test.go = %q, want Postgres test database URL", dbTest)
+	}
+
+	dbTestHelper := readFile(t, filepath.Join(destination, "internal", "db", "dbtest", "dbtest.go"))
+	if !strings.Contains(dbTestHelper, `t.Skip("DATABASE_URL is required for Postgres database tests")`) {
+		t.Errorf("GenerateApp(default app) internal/db/dbtest/dbtest.go = %q, want explicit Postgres test database skip", dbTestHelper)
 	}
 
 	dbCommandTest := readFile(t, filepath.Join(destination, "internal", "db", "command_test.go"))
