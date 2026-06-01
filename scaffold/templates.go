@@ -761,6 +761,179 @@ var _ = templruntime.GeneratedTemplate
 
 Place reusable templ components here.
 `,
+	"internal/views/forms/forms.go": `package forms
+
+import (
+	"slices"
+	"strings"
+	"unicode"
+)
+
+type Values map[string]string
+
+type Errors map[string][]string
+
+type Field struct {
+	Name   string
+	ID     string
+	Label  string
+	Value  string
+	Errors []string
+}
+
+func NewField(name string, label string, values Values, errors Errors) Field {
+	if label == "" {
+		label = Label(name)
+	}
+	return Field{
+		Name:   name,
+		ID:     FieldID(name),
+		Label:  label,
+		Value:  values.Get(name),
+		Errors: errors.Get(name),
+	}
+}
+
+func (v Values) Get(name string) string {
+	if v == nil {
+		return ""
+	}
+	return v[name]
+}
+
+func (e Errors) Get(name string) []string {
+	if e == nil {
+		return nil
+	}
+	return slices.Clone(e[name])
+}
+
+func FieldID(name string) string {
+	id := normalizedFieldID(name)
+	if id == "" {
+		return "field"
+	}
+	return id
+}
+
+func Label(name string) string {
+	id := normalizedFieldID(name)
+	if id == "" {
+		return ""
+	}
+
+	parts := strings.Split(id, "-")
+	for i, part := range parts {
+		runes := []rune(part)
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		parts[i] = string(runes)
+	}
+	return strings.Join(parts, " ")
+}
+
+func normalizedFieldID(name string) string {
+	var builder strings.Builder
+	lastSeparator := false
+	for _, r := range strings.TrimSpace(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(unicode.ToLower(r))
+			lastSeparator = false
+			continue
+		}
+		if builder.Len() > 0 && !lastSeparator {
+			builder.WriteByte('-')
+			lastSeparator = true
+		}
+	}
+
+	return strings.Trim(builder.String(), "-")
+}
+`,
+	"internal/views/forms/forms_test.go": `package forms
+
+import (
+	"slices"
+	"testing"
+)
+
+func TestNewFieldBuildsViewData(t *testing.T) {
+	values := Values{"post[title]": "Hello"}
+	errors := Errors{"post[title]": []string{"is required"}}
+
+	field := NewField("post[title]", "", values, errors)
+
+	if field.Name != "post[title]" {
+		t.Errorf("NewField(%q, label, values, errors).Name = %q, want %q", "post[title]", field.Name, "post[title]")
+	}
+	if field.ID != "post-title" {
+		t.Errorf("NewField(%q, label, values, errors).ID = %q, want %q", "post[title]", field.ID, "post-title")
+	}
+	if field.Label != "Post Title" {
+		t.Errorf("NewField(%q, label, values, errors).Label = %q, want %q", "post[title]", field.Label, "Post Title")
+	}
+	if field.Value != "Hello" {
+		t.Errorf("NewField(%q, label, values, errors).Value = %q, want %q", "post[title]", field.Value, "Hello")
+	}
+	if !slices.Equal(field.Errors, []string{"is required"}) {
+		t.Errorf("NewField(%q, label, values, errors).Errors = %v, want %v", "post[title]", field.Errors, []string{"is required"})
+	}
+
+	errors["post[title]"][0] = "changed"
+	if !slices.Equal(field.Errors, []string{"is required"}) {
+		t.Errorf("NewField(%q, label, values, errors).Errors after source mutation = %v, want %v", "post[title]", field.Errors, []string{"is required"})
+	}
+}
+
+func TestNewFieldUsesExplicitLabel(t *testing.T) {
+	field := NewField("email", "Email address", nil, nil)
+
+	if field.Label != "Email address" {
+		t.Errorf("NewField(%q, %q, nil, nil).Label = %q, want %q", "email", "Email address", field.Label, "Email address")
+	}
+}
+
+func TestLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "field", want: "Field"},
+		{name: "Field", want: "Field"},
+		{name: "post[title]", want: "Post Title"},
+		{name: "!!!", want: ""},
+	}
+
+	for _, tt := range tests {
+		got := Label(tt.name)
+		if got != tt.want {
+			t.Errorf("Label(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestFieldID(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "email", want: "email"},
+		{name: "post[title]", want: "post-title"},
+		{name: " user email ", want: "user-email"},
+		{name: "profile.avatar_url", want: "profile-avatar-url"},
+		{name: "!!!", want: "field"},
+	}
+
+	for _, tt := range tests {
+		got := FieldID(tt.name)
+		if got != tt.want {
+			t.Errorf("FieldID(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+`,
 	"internal/views/assets/assets.go": `package assets
 
 import (
