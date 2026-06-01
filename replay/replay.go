@@ -26,7 +26,6 @@ var defaultHeaders = []string{
 
 var defaultResponseHeaders = []string{
 	"Content-Type",
-	"Location",
 }
 
 // Snapshot captures enough request data to replay a handler request.

@@ -114,8 +114,8 @@ func TestExpectedResponseFromCapturesStableResponseFields(t *testing.T) {
 	if got.Headers["Content-Type"][0] != "text/plain; charset=utf-8" {
 		t.Errorf("ExpectedResponseFrom(response) Content-Type = %v, want text/plain", got.Headers["Content-Type"])
 	}
-	if got.Headers["Location"][0] != "/posts" {
-		t.Errorf("ExpectedResponseFrom(response) Location = %v, want /posts", got.Headers["Location"])
+	if _, ok := got.Headers["Location"]; ok {
+		t.Errorf("ExpectedResponseFrom(response) Location present = true, want false")
 	}
 	if _, ok := got.Headers["Set-Cookie"]; ok {
 		t.Errorf("ExpectedResponseFrom(response) Set-Cookie present = true, want false")
