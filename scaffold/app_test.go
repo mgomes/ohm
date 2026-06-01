@@ -22,6 +22,9 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	}
 
 	wantFiles := []string{
+		".env.development.example",
+		".env.example",
+		".env.test.example",
 		"go.mod",
 		"cmd/journal/main.go",
 		"internal/app/app.go",
@@ -58,6 +61,21 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	}
 	if !strings.Contains(goMod, "github.com/a-h/templ v0.3.1020") {
 		t.Errorf("GenerateApp(sqlite app) go.mod = %q, want templ dependency", goMod)
+	}
+
+	envExample := readFile(t, filepath.Join(destination, ".env.example"))
+	if strings.Contains(envExample, "DATABASE_URL=") {
+		t.Errorf("GenerateApp(sqlite app) .env.example = %q, want no shared database URL", envExample)
+	}
+
+	developmentEnvExample := readFile(t, filepath.Join(destination, ".env.development.example"))
+	if !strings.Contains(developmentEnvExample, "DATABASE_URL=file:development.db") {
+		t.Errorf("GenerateApp(sqlite app) .env.development.example = %q, want sqlite database URL", developmentEnvExample)
+	}
+
+	testEnvExample := readFile(t, filepath.Join(destination, ".env.test.example"))
+	if !strings.Contains(testEnvExample, "DATABASE_URL=file:test.db") {
+		t.Errorf("GenerateApp(sqlite app) .env.test.example = %q, want sqlite test database URL", testEnvExample)
 	}
 
 	dbFile := readFile(t, filepath.Join(destination, "internal", "db", "db.go"))
@@ -161,6 +179,16 @@ func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
 	}
 	if !strings.Contains(dbFile, "migrate.DialectPostgres") {
 		t.Errorf("GenerateApp(default app) internal/db/db.go = %q, want Postgres migration dialect", dbFile)
+	}
+
+	developmentEnvExample := readFile(t, filepath.Join(destination, ".env.development.example"))
+	if !strings.Contains(developmentEnvExample, "DATABASE_URL=postgres://localhost/ledger_development?sslmode=disable") {
+		t.Errorf("GenerateApp(default app) .env.development.example = %q, want Postgres database URL", developmentEnvExample)
+	}
+
+	testEnvExample := readFile(t, filepath.Join(destination, ".env.test.example"))
+	if !strings.Contains(testEnvExample, "DATABASE_URL=postgres://localhost/test?sslmode=disable") {
+		t.Errorf("GenerateApp(default app) .env.test.example = %q, want Postgres test database URL", testEnvExample)
 	}
 
 	dbTest := readFile(t, filepath.Join(destination, "internal", "db", "db_test.go"))

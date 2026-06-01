@@ -154,21 +154,22 @@ func ensureEmptyDestination(destination string) error {
 }
 
 type appData struct {
-	Name            string
-	Title           string
-	Module          string
-	OhmVersion      string
-	TemplModule     string
-	TemplVersion    string
-	DriverModule    string
-	DriverImport    string
-	DriverName      string
-	DriverVersion   string
-	MigrateDialect  string
-	SQLCEngine      string
-	DatabaseTags    string
-	TestDatabaseURL string
-	DatabaseSummary string
+	Name               string
+	Title              string
+	Module             string
+	OhmVersion         string
+	TemplModule        string
+	TemplVersion       string
+	DriverModule       string
+	DriverImport       string
+	DriverName         string
+	DriverVersion      string
+	MigrateDialect     string
+	SQLCEngine         string
+	DatabaseTags       string
+	ExampleDatabaseURL string
+	TestDatabaseURL    string
+	DatabaseSummary    string
 }
 
 func newAppData(cfg App) (appData, error) {
@@ -190,6 +191,7 @@ func newAppData(cfg App) (appData, error) {
 		data.MigrateDialect = "migrate.DialectPostgres"
 		data.SQLCEngine = "postgresql"
 		data.DatabaseTags = `env:"DATABASE_URL,required"`
+		data.ExampleDatabaseURL = fmt.Sprintf("postgres://localhost/%s_development?sslmode=disable", databaseName(cfg.Name))
 		data.TestDatabaseURL = "postgres://localhost/test?sslmode=disable"
 		data.DatabaseSummary = "Postgres via pgx"
 	case DatabaseSQLite:
@@ -200,6 +202,7 @@ func newAppData(cfg App) (appData, error) {
 		data.MigrateDialect = "migrate.DialectSQLite"
 		data.SQLCEngine = "sqlite"
 		data.DatabaseTags = fmt.Sprintf(`env:"DATABASE_URL" default:%q`, sqliteDefaultURL)
+		data.ExampleDatabaseURL = sqliteDefaultURL
 		data.TestDatabaseURL = "file:test.db"
 		data.DatabaseSummary = "SQLite via modernc.org/sqlite"
 	default:
@@ -218,6 +221,10 @@ func titleName(name string) string {
 		parts[i] = strings.ToUpper(part[:1]) + part[1:]
 	}
 	return strings.Join(parts, " ")
+}
+
+func databaseName(name string) string {
+	return strings.ReplaceAll(name, "-", "_")
 }
 
 func renderFile(path string, raw string, data appData) ([]byte, error) {
