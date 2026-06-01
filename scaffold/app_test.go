@@ -50,6 +50,17 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(dbFile, `default:"file:development.db"`) {
 		t.Errorf("GenerateApp(sqlite app) internal/db/db.go = %q, want sqlite default database URL", dbFile)
 	}
+
+	justfile := readFile(t, filepath.Join(destination, "justfile"))
+	if !strings.Contains(justfile, "test-unit:") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want test-unit task", justfile)
+	}
+	if !strings.Contains(justfile, "test-integration:") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want test-integration task", justfile)
+	}
+	if !strings.Contains(justfile, "check: fmt-check tidy vet test") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want check task to run closed-loop checks", justfile)
+	}
 }
 
 func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
