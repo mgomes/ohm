@@ -300,6 +300,41 @@ func TestRecovererDoesNotWriteAfterCommittedResponse(t *testing.T) {
 	}
 }
 
+func TestRecovererRendersWhenWriteHeaderPanicsBeforeCommit(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	app := New()
+	app.Use(Recoverer(logger))
+	app.Get("/bad-status", func(req *Request) error {
+		req.ResponseWriter().WriteHeader(0)
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/bad-status", nil)
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusInternalServerError)
+	}
+	if res.Body.String() != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), http.StatusText(http.StatusInternalServerError))
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", buf.String(), err)
+	}
+	if got["status"] != float64(http.StatusInternalServerError) {
+		t.Errorf("panic log status = %v, want %d", got["status"], http.StatusInternalServerError)
+	}
+	if got["response_committed"] != false {
+		t.Errorf("panic log response_committed = %v, want false", got["response_committed"])
+	}
+}
+
 func TestRecovererPreservesHTTPAbortHandlerPanic(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))

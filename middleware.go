@@ -140,26 +140,28 @@ func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) 
 	wrapped := httpsnoop.Wrap(w, httpsnoop.Hooks{
 		WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
 			return func(code int) {
-				state.mark(code)
 				next(code)
+				state.mark(code)
 			}
 		},
 		Write: func(next httpsnoop.WriteFunc) httpsnoop.WriteFunc {
 			return func(body []byte) (int, error) {
+				n, err := next(body)
 				state.mark(http.StatusOK)
-				return next(body)
+				return n, err
 			}
 		},
 		ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
 			return func(src io.Reader) (int64, error) {
+				n, err := next(src)
 				state.mark(http.StatusOK)
-				return next(src)
+				return n, err
 			}
 		},
 		Flush: func(next httpsnoop.FlushFunc) httpsnoop.FlushFunc {
 			return func() {
-				state.mark(http.StatusOK)
 				next()
+				state.mark(http.StatusOK)
 			}
 		},
 	})
