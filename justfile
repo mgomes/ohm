@@ -19,7 +19,8 @@ fmt:
     gofmt -w $(git ls-files '*.go')
 
 fmt-check:
-    test -z "$(gofmt -l .)"
+    files="$(gofmt -l .)"; \
+    test -z "$files" || { printf '%s\n' "$files"; exit 1; }
 
 tidy:
     go mod tidy
