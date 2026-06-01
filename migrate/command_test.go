@@ -85,6 +85,45 @@ func TestCommandReportsEmptyMigrationBodyRollback(t *testing.T) {
 	}
 }
 
+func TestCommandRunsReset(t *testing.T) {
+	runner := &fakeRunner{
+		resetResults: []Result{
+			{Version: 2, Source: "002_add_posts.sql"},
+			{Version: 1, Source: "001_create_users.sql"},
+		},
+	}
+	var stdout bytes.Buffer
+	command := Command(runner)
+
+	err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"reset"})
+	if err != nil {
+		t.Fatalf("Command(runner).Run(ctx, io, %v) error = %v, want nil", []string{"reset"}, err)
+	}
+	if runner.resetCalls != 1 {
+		t.Errorf("Command(runner).Run(ctx, io, %v) reset calls = %d, want 1", []string{"reset"}, runner.resetCalls)
+	}
+	want := "Rolled back 2 002_add_posts.sql\nRolled back 1 001_create_users.sql\n"
+	if stdout.String() != want {
+		t.Errorf("Command(runner).Run(ctx, io, %v) stdout = %q, want %q", []string{"reset"}, stdout.String(), want)
+	}
+}
+
+func TestCommandReportsSkippedReset(t *testing.T) {
+	runner := &fakeRunner{}
+	var stdout bytes.Buffer
+	command := Command(runner)
+
+	err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"reset"})
+	if err != nil {
+		t.Fatalf("Command(runner).Run(ctx, io, %v) error = %v, want nil", []string{"reset"}, err)
+	}
+
+	want := "No migrations to reset.\n"
+	if stdout.String() != want {
+		t.Errorf("Command(runner).Run(ctx, io, %v) stdout = %q, want %q", []string{"reset"}, stdout.String(), want)
+	}
+}
+
 func TestCommandRunsStatus(t *testing.T) {
 	runner := &fakeRunner{
 		statuses: []Status{
@@ -125,15 +164,18 @@ func TestCommandRequiresRunner(t *testing.T) {
 }
 
 type fakeRunner struct {
-	upResults   []Result
-	downResult  Result
-	statuses    []Status
-	upErr       error
-	downErr     error
-	statusErr   error
-	upCalls     int
-	downCalls   int
-	statusCalls int
+	upResults    []Result
+	downResult   Result
+	resetResults []Result
+	statuses     []Status
+	upErr        error
+	downErr      error
+	resetErr     error
+	statusErr    error
+	upCalls      int
+	downCalls    int
+	resetCalls   int
+	statusCalls  int
 }
 
 func (r *fakeRunner) Up(context.Context) ([]Result, error) {
@@ -144,6 +186,11 @@ func (r *fakeRunner) Up(context.Context) ([]Result, error) {
 func (r *fakeRunner) Down(context.Context) (Result, error) {
 	r.downCalls++
 	return r.downResult, r.downErr
+}
+
+func (r *fakeRunner) Reset(context.Context) ([]Result, error) {
+	r.resetCalls++
+	return r.resetResults, r.resetErr
 }
 
 func (r *fakeRunner) Status(context.Context) ([]Status, error) {

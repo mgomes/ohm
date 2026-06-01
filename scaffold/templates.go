@@ -108,7 +108,7 @@ func MigrateCommand() cli.Command {
 	return cli.Command{
 		Name:    "migrate",
 		Summary: "run database migrations",
-		Usage:   "migrate <up|down|status>",
+		Usage:   "migrate <up|down|reset|status>",
 		Run:     runMigrations,
 	}
 }
@@ -190,6 +190,24 @@ Create migration files with:
 ohm generate migration create_posts
 ` + "```" + `
 `,
+	"queries/health.sql": `-- name: HealthCheck :one
+SELECT 1;
+`,
+	"internal/db/dbgen/README.md": `# Generated Queries
+
+sqlc writes generated query code into this package.
+`,
+	"sqlc.yaml": `version: "2"
+sql:
+  - engine: "{{.SQLCEngine}}"
+    schema: "migrations"
+    queries: "queries"
+    gen:
+      go:
+        package: "dbgen"
+        out: "internal/db/dbgen"
+        sql_package: "database/sql"
+`,
 	"static/README.md": `# Static Assets
 
 Place application static assets here.
@@ -213,6 +231,17 @@ migrate-down:
 
 migrate-status:
     go run ./cmd/{{.Name}} migrate status
+
+migrate-reset:
+    go run ./cmd/{{.Name}} migrate reset
+
+db-reset: migrate-reset migrate-up
+
+test-db-setup:
+    OHM_ENV=test go run ./cmd/{{.Name}} migrate up
+
+sqlc:
+    go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
 
 test:
     go test ./...
