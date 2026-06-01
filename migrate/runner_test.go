@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
 )
@@ -22,6 +24,20 @@ func TestNewValidatesInputs(t *testing.T) {
 	_, err = New(&sql.DB{}, "", fstest.MapFS{})
 	if !errors.Is(err, ErrUnsupportedDialect) {
 		t.Fatalf("New(db, %q, fs) error = %v, want ErrUnsupportedDialect", "", err)
+	}
+
+	_, err = NewFromDir(&sql.DB{}, DialectPostgres, filepath.Join(t.TempDir(), "missing"))
+	if err == nil {
+		t.Fatalf("NewFromDir(db, %q, missingDir) error = nil, want non-nil", DialectPostgres)
+	}
+
+	file := filepath.Join(t.TempDir(), "migrations")
+	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", file, err)
+	}
+	_, err = NewFromDir(&sql.DB{}, DialectPostgres, file)
+	if err == nil {
+		t.Fatalf("NewFromDir(db, %q, file) error = nil, want non-nil", DialectPostgres)
 	}
 }
 

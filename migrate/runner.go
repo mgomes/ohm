@@ -112,6 +112,13 @@ func NewFromDir(db *sql.DB, dialect Dialect, dir string, opts ...Option) (*Goose
 	if dir == "" {
 		return nil, fmt.Errorf("migration directory is required")
 	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil, fmt.Errorf("stat migration directory %q: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("migration directory %q is not a directory", dir)
+	}
 	return New(db, dialect, os.DirFS(dir), opts...)
 }
 
