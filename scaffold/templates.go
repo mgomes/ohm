@@ -809,6 +809,32 @@ func (e Errors) Get(name string) []string {
 }
 
 func FieldID(name string) string {
+	id := normalizedFieldID(name)
+	if id == "" {
+		return "field"
+	}
+	return id
+}
+
+func Label(name string) string {
+	id := normalizedFieldID(name)
+	if id == "" {
+		return ""
+	}
+
+	parts := strings.Split(id, "-")
+	for i, part := range parts {
+		runes := []rune(part)
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		parts[i] = string(runes)
+	}
+	return strings.Join(parts, " ")
+}
+
+func normalizedFieldID(name string) string {
 	var builder strings.Builder
 	lastSeparator := false
 	for _, r := range strings.TrimSpace(name) {
@@ -823,29 +849,7 @@ func FieldID(name string) string {
 		}
 	}
 
-	id := strings.Trim(builder.String(), "-")
-	if id == "" {
-		return "field"
-	}
-	return id
-}
-
-func Label(name string) string {
-	id := FieldID(name)
-	if id == "field" {
-		return ""
-	}
-
-	parts := strings.Split(id, "-")
-	for i, part := range parts {
-		runes := []rune(part)
-		if len(runes) == 0 {
-			continue
-		}
-		runes[0] = unicode.ToUpper(runes[0])
-		parts[i] = string(runes)
-	}
-	return strings.Join(parts, " ")
+	return strings.Trim(builder.String(), "-")
 }
 `,
 	"internal/views/forms/forms_test.go": `package forms
@@ -888,6 +892,25 @@ func TestNewFieldUsesExplicitLabel(t *testing.T) {
 
 	if field.Label != "Email address" {
 		t.Errorf("NewField(%q, %q, nil, nil).Label = %q, want %q", "email", "Email address", field.Label, "Email address")
+	}
+}
+
+func TestLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "field", want: "Field"},
+		{name: "Field", want: "Field"},
+		{name: "post[title]", want: "Post Title"},
+		{name: "!!!", want: ""},
+	}
+
+	for _, tt := range tests {
+		got := Label(tt.name)
+		if got != tt.want {
+			t.Errorf("Label(%q) = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
 
