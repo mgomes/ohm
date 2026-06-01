@@ -44,6 +44,7 @@ func run(ctx context.Context, args []string) error {
 	program := cli.New("{{.Name}}", []cli.Command{
 		cli.ServerCommand(application.HTTPHandler()),
 		cli.RoutesCommand(application),
+		db.Command(),
 		db.MigrateCommand(),
 		replay.Command(application.HTTPHandler()),
 	})
@@ -141,16 +142,11 @@ func Open(ctx context.Context, cfg Config) (*sql.DB, error) {
 	return db, nil
 }
 
-func MigrateCommand() cli.Command {
-	return cli.Command{
-		Name:    "migrate",
-		Summary: "run database migrations",
-		Usage:   "migrate <up|down|reset|status>",
-		Run:     runMigrations,
+func withConfiguredDB(ctx context.Context, fn func(*sql.DB) error) (err error) {
+	if fn == nil {
+		return fmt.Errorf("database function is required")
 	}
-}
 
-func runMigrations(ctx context.Context, io cli.IO, args []string) (err error) {
 	cfg, err := config.Load[Config]()
 	if err != nil {
 		return fmt.Errorf("load database config: %w", err)
@@ -166,11 +162,123 @@ func runMigrations(ctx context.Context, io cli.IO, args []string) (err error) {
 		}
 	}()
 
-	runner, err := migrate.NewFromDir(db, {{.MigrateDialect}}, migrationsDir)
-	if err != nil {
+	return fn(db)
+}
+
+func MigrateCommand() cli.Command {
+	return cli.Command{
+		Name:    "migrate",
+		Summary: "run database migrations",
+		Usage:   "migrate <up|down|reset|status>",
+		Run:     runMigrations,
+	}
+}
+
+func runMigrations(ctx context.Context, io cli.IO, args []string) error {
+	return withConfiguredDB(ctx, func(db *sql.DB) error {
+		runner, err := migrate.NewFromDir(db, {{.MigrateDialect}}, migrationsDir)
+		if err != nil {
+			return err
+		}
+		return migrate.Command(runner).Run(ctx, io, args)
+	})
+}
+`,
+	"internal/db/command.go": `package db
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"io"
+
+	"github.com/mgomes/ohm/cli"
+)
+
+func Command() cli.Command {
+	return cli.Command{
+		Name:    "db",
+		Summary: "run database tasks",
+		Usage:   "db <seed>",
+		Run:     runDBCommand,
+	}
+}
+
+func runDBCommand(ctx context.Context, commandIO cli.IO, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("%w: db requires one subcommand", cli.ErrUsage)
+	}
+
+	switch args[0] {
+	case "seed":
+		return runSeed(ctx, commandIO)
+	default:
+		return fmt.Errorf("%w: unknown db subcommand %q", cli.ErrUsage, args[0])
+	}
+}
+
+func runSeed(ctx context.Context, commandIO cli.IO) error {
+	if err := withConfiguredDB(ctx, func(db *sql.DB) error {
+		return Seed(ctx, db)
+	}); err != nil {
 		return err
 	}
-	return migrate.Command(runner).Run(ctx, io, args)
+	fmt.Fprintln(output(commandIO.Stdout), "Seeded database.")
+	return nil
+}
+
+func output(w io.Writer) io.Writer {
+	if w == nil {
+		return io.Discard
+	}
+	return w
+}
+`,
+	"internal/db/command_test.go": `package db
+
+import (
+{{- if .IsSQLite }}
+	"bytes"
+{{- end }}
+	"context"
+	"errors"
+{{- if .IsSQLite }}
+	"path/filepath"
+{{- end }}
+	"strings"
+	"testing"
+
+	"github.com/mgomes/ohm/cli"
+)
+
+func TestCommandRunsSeed(t *testing.T) {
+{{- if .IsSQLite }}
+	databaseURL := "file:" + filepath.Join(t.TempDir(), "seed.db")
+	t.Setenv("DATABASE_URL", databaseURL)
+
+	var stdout bytes.Buffer
+	command := Command()
+	err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"seed"})
+	if err != nil {
+		t.Fatalf("Command().Run(ctx, io, %v) error = %v, want nil", []string{"seed"}, err)
+	}
+	if got := stdout.String(); got != "Seeded database.\n" {
+		t.Errorf("Command().Run(ctx, io, %v) stdout = %q, want %q", []string{"seed"}, got, "Seeded database.\n")
+	}
+{{- else }}
+	t.Skip("db seed integration test requires a configured Postgres test database")
+{{- end }}
+}
+
+func TestCommandRejectsInvalidSubcommand(t *testing.T) {
+	command := Command()
+	err := command.Run(context.Background(), cli.IO{}, []string{"drop"})
+	if !errors.Is(err, cli.ErrUsage) {
+		t.Fatalf("Command().Run(ctx, io, %v) error = %v, want ErrUsage", []string{"drop"}, err)
+	}
+	if !strings.Contains(err.Error(), "unknown db subcommand") {
+		t.Errorf("Command().Run(ctx, io, %v) error = %v, want unknown subcommand context", []string{"drop"}, err)
+	}
 }
 `,
 	"internal/db/db_test.go": `package db
@@ -191,6 +299,27 @@ func TestConfigLoadsDatabaseURL(t *testing.T) {
 	if got := cfg.URL.Reveal(); got != "{{.TestDatabaseURL}}" {
 		t.Errorf("config.Load[Config](WithoutEnvFiles()) DATABASE_URL = %q, want %q", got, "{{.TestDatabaseURL}}")
 	}
+}
+`,
+	"internal/db/seeds.go": `package db
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+)
+
+func Seed(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return fmt.Errorf("database is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 `,
 	"internal/handlers/home.go": `package handlers
@@ -488,6 +617,9 @@ migrate-status:
 
 migrate-reset:
     go run ./cmd/{{.Name}} migrate reset
+
+db-seed:
+    go run ./cmd/{{.Name}} db seed
 
 db-reset: migrate-reset migrate-up
 
