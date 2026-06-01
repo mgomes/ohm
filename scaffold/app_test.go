@@ -28,6 +28,7 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"go.mod",
 		"cmd/journal/main.go",
 		"internal/app/app.go",
+		"internal/app/errors.go",
 		"internal/app/app_test.go",
 		"internal/apptest/apptest.go",
 		"internal/apptest/apptest_test.go",
@@ -49,6 +50,9 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/views/forms/forms_test.go",
 		"internal/views/layouts/application.templ",
 		"internal/views/layouts/application_templ.go",
+		"internal/views/pages/error.templ",
+		"internal/views/pages/error_test.go",
+		"internal/views/pages/error_templ.go",
 		"internal/views/pages/home.templ",
 		"internal/views/pages/home_test.go",
 		"internal/views/pages/home_templ.go",
@@ -187,11 +191,34 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(appFile, "ohm.RequestLogger(logger), ohm.Recoverer(logger)") {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want recovery middleware after request logger", appFile)
 	}
-	if !strings.Contains(appFile, `application.ChiRouter().Get("/assets/*", assets.ServeHTTP)`) {
+	if !strings.Contains(appFile, `ohm.New(ohm.WithErrorHandler(handleError))`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want HTML error handler", appFile)
+	}
+	if !strings.Contains(appFile, `router := application.ChiRouter()`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want shared chi router binding", appFile)
+	}
+	if !strings.Contains(appFile, `router.Get("/assets/*", assets.ServeHTTP)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want GET static asset route", appFile)
 	}
-	if !strings.Contains(appFile, `application.ChiRouter().Head("/assets/*", assets.ServeHTTP)`) {
+	if !strings.Contains(appFile, `router.Head("/assets/*", assets.ServeHTTP)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want HEAD static asset route", appFile)
+	}
+	if !strings.Contains(appFile, `router.NotFound(notFound)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want not found error page", appFile)
+	}
+	if !strings.Contains(appFile, `methodNotAllowed(w, r, ohm.AllowedMethods(router, r.URL.Path))`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want method not allowed header preservation", appFile)
+	}
+
+	appErrorFile := readFile(t, filepath.Join(destination, "internal", "app", "errors.go"))
+	if !strings.Contains(appErrorFile, `status, message := ohm.ErrorResponse(err)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/errors.go = %q, want safe error response mapping", appErrorFile)
+	}
+	if !strings.Contains(appErrorFile, `pages.Error(status, message)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/errors.go = %q, want error page rendering", appErrorFile)
+	}
+	if !strings.Contains(appErrorFile, `w.Header().Add("Allow", method)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/errors.go = %q, want Allow header rendering", appErrorFile)
 	}
 
 	appTestFile := readFile(t, filepath.Join(destination, "internal", "app", "app_test.go"))
@@ -213,6 +240,11 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	homeView := readFile(t, filepath.Join(destination, "internal", "views", "pages", "home.templ"))
 	if !strings.Contains(homeView, `@layouts.Application(title)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/pages/home.templ = %q, want application layout", homeView)
+	}
+
+	errorView := readFile(t, filepath.Join(destination, "internal", "views", "pages", "error.templ"))
+	if !strings.Contains(errorView, `templ Error(status int, message string)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/pages/error.templ = %q, want error page component", errorView)
 	}
 
 	if !strings.Contains(appTestFile, `hasRoute(routes, "GET", "/")`) {

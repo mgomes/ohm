@@ -138,6 +138,35 @@ func (a *App) Routes() ([]Route, error) {
 	return routes, nil
 }
 
+// AllowedMethods returns HTTP methods that match path in routes.
+func AllowedMethods(routes chi.Routes, path string) []string {
+	if routes == nil {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	var methods []string
+	if err := chi.Walk(routes, func(method string, _ string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if _, ok := seen[method]; ok {
+			return nil
+		}
+		seen[method] = struct{}{}
+		methods = append(methods, method)
+		return nil
+	}); err != nil {
+		return nil
+	}
+	slices.Sort(methods)
+
+	var allowed []string
+	for _, method := range methods {
+		if routes.Match(chi.NewRouteContext(), method, path) {
+			allowed = append(allowed, method)
+		}
+	}
+	return allowed
+}
+
 func (a *App) adapt(handler Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req := newRequest(w, r)

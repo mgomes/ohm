@@ -67,6 +67,17 @@ func (r *Request) Render(v render.Renderer) error {
 
 // HTML renders a templ component as HTML with status.
 func (r *Request) HTML(status int, component templ.Component) error {
+	return RenderHTML(r.w, r.r, status, component)
+}
+
+// RenderHTML renders a templ component as an HTML response with status.
+func RenderHTML(w http.ResponseWriter, r *http.Request, status int, component templ.Component) error {
+	if w == nil {
+		return fmt.Errorf("html response writer is required")
+	}
+	if r == nil {
+		return fmt.Errorf("html request is required")
+	}
 	if component == nil {
 		return fmt.Errorf("html component is required")
 	}
@@ -79,8 +90,8 @@ func (r *Request) HTML(status int, component templ.Component) error {
 		return fmt.Errorf("render html component: %w", err)
 	}
 
-	render.Status(r.r, status)
-	render.HTML(r.w, r.r, body.String())
+	render.Status(r, status)
+	render.HTML(w, r, body.String())
 	return nil
 }
 

@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/a-h/templ"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
@@ -84,6 +86,32 @@ func TestAppDefaultErrorHandlerDoesNotExposeWrappedInternalError(t *testing.T) {
 	}
 	if res.Body.String() != http.StatusText(http.StatusInternalServerError) {
 		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), http.StatusText(http.StatusInternalServerError))
+	}
+}
+
+func TestErrorResponseUsesHTTPErrorPublicMessage(t *testing.T) {
+	err := NewHTTPError(http.StatusNotFound, "post not found", errors.New("missing post"))
+
+	status, message := ErrorResponse(err)
+
+	if status != http.StatusNotFound {
+		t.Errorf("ErrorResponse(%v) status = %d, want %d", err, status, http.StatusNotFound)
+	}
+	if message != "post not found" {
+		t.Errorf("ErrorResponse(%v) message = %q, want %q", err, message, "post not found")
+	}
+}
+
+func TestErrorResponseDoesNotExposeUnexpectedErrors(t *testing.T) {
+	err := errors.New("database password leaked")
+
+	status, message := ErrorResponse(err)
+
+	if status != http.StatusInternalServerError {
+		t.Errorf("ErrorResponse(%v) status = %d, want %d", err, status, http.StatusInternalServerError)
+	}
+	if message != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("ErrorResponse(%v) message = %q, want %q", err, message, http.StatusText(http.StatusInternalServerError))
 	}
 }
 
@@ -251,5 +279,18 @@ func TestAppRoutesReturnsRegisteredRoutes(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("App.Routes()[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+func TestAllowedMethodsReturnsMatchingRouteMethods(t *testing.T) {
+	router := chi.NewRouter()
+	router.Get("/assets/*", func(http.ResponseWriter, *http.Request) {})
+	router.Head("/assets/*", func(http.ResponseWriter, *http.Request) {})
+
+	got := AllowedMethods(router, "/assets/app.css")
+	want := []string{http.MethodGet, http.MethodHead}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("AllowedMethods(router, %q) = %v, want %v", "/assets/app.css", got, want)
 	}
 }
