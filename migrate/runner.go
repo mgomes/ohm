@@ -47,6 +47,7 @@ type Status struct {
 type Runner interface {
 	Up(context.Context) ([]Result, error)
 	Down(context.Context) (Result, error)
+	Reset(context.Context) ([]Result, error)
 	Status(context.Context) ([]Status, error)
 }
 
@@ -155,6 +156,25 @@ func (r *GooseRunner) Down(ctx context.Context) (Result, error) {
 		return Result{}, fmt.Errorf("migrate down: %w", err)
 	}
 	return migrationResult(result), nil
+}
+
+// Reset rolls back all applied migrations.
+func (r *GooseRunner) Reset(ctx context.Context) ([]Result, error) {
+	if err := r.validate(); err != nil {
+		return nil, err
+	}
+
+	var results []Result
+	for {
+		result, err := r.Down(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if result.Skipped {
+			return results, nil
+		}
+		results = append(results, result)
+	}
 }
 
 // Status returns migration state.

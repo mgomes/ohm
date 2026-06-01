@@ -26,9 +26,12 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"cmd/journal/main.go",
 		"internal/app/app.go",
 		"internal/db/db.go",
+		"internal/db/dbgen/README.md",
 		"internal/handlers/home.go",
 		"internal/handlers/home_test.go",
 		"migrations/README.md",
+		"queries/health.sql",
+		"sqlc.yaml",
 		"static/README.md",
 		"justfile",
 	}
@@ -61,6 +64,26 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(justfile, "check: fmt-check tidy vet test") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want check task to run closed-loop checks", justfile)
 	}
+	if !strings.Contains(justfile, "migrate-reset:") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want migrate-reset task", justfile)
+	}
+	if !strings.Contains(justfile, "db-reset: migrate-reset migrate-up") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want db-reset task", justfile)
+	}
+	if !strings.Contains(justfile, "test-db-setup:") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want test database setup task", justfile)
+	}
+	if !strings.Contains(justfile, "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want pinned sqlc generation task", justfile)
+	}
+
+	sqlcConfig := readFile(t, filepath.Join(destination, "sqlc.yaml"))
+	if !strings.Contains(sqlcConfig, `engine: "sqlite"`) {
+		t.Errorf("GenerateApp(sqlite app) sqlc.yaml = %q, want SQLite engine", sqlcConfig)
+	}
+	if !strings.Contains(sqlcConfig, `out: "internal/db/dbgen"`) {
+		t.Errorf("GenerateApp(sqlite app) sqlc.yaml = %q, want generated query output package", sqlcConfig)
+	}
 
 	appFile := readFile(t, filepath.Join(destination, "internal", "app", "app.go"))
 	if !strings.Contains(appFile, "slog.NewJSONHandler(os.Stderr, nil)") {
@@ -90,6 +113,11 @@ func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
 	}
 	if !strings.Contains(dbFile, "migrate.DialectPostgres") {
 		t.Errorf("GenerateApp(default app) internal/db/db.go = %q, want Postgres migration dialect", dbFile)
+	}
+
+	sqlcConfig := readFile(t, filepath.Join(destination, "sqlc.yaml"))
+	if !strings.Contains(sqlcConfig, `engine: "postgresql"`) {
+		t.Errorf("GenerateApp(default app) sqlc.yaml = %q, want Postgres engine", sqlcConfig)
 	}
 }
 
@@ -141,6 +169,7 @@ func TestGeneratedSQLiteApplicationBuilds(t *testing.T) {
 	root := repoRoot(t)
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
 	runGo(t, destination, "mod", "tidy")
+	runGo(t, destination, "run", "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0", "generate")
 	runGo(t, destination, "test", "./...")
 }
 

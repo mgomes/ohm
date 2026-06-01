@@ -70,6 +70,14 @@ func TestNewAllowsEmptyMigrationSet(t *testing.T) {
 	if !downResult.Skipped {
 		t.Errorf("runner.Down(ctx) Skipped = %t, want true", downResult.Skipped)
 	}
+
+	resetResults, err := runner.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("runner.Reset(ctx) error = %v, want nil", err)
+	}
+	if len(resetResults) != 0 {
+		t.Errorf("runner.Reset(ctx) result count = %d, want 0", len(resetResults))
+	}
 }
 
 func TestGooseDialect(t *testing.T) {

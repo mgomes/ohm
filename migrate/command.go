@@ -9,12 +9,12 @@ import (
 	"github.com/mgomes/ohm/cli"
 )
 
-// Command returns a migrate command with up, down, and status subcommands.
+// Command returns a migrate command with up, down, reset, and status subcommands.
 func Command(runner Runner) cli.Command {
 	return cli.Command{
 		Name:    "migrate",
 		Summary: "run database migrations",
-		Usage:   "migrate <up|down|status>",
+		Usage:   "migrate <up|down|reset|status>",
 		Run: func(ctx context.Context, io cli.IO, args []string) error {
 			if runner == nil {
 				return fmt.Errorf("migration runner is required")
@@ -28,6 +28,8 @@ func Command(runner Runner) cli.Command {
 				return runUp(ctx, io, runner)
 			case "down":
 				return runDown(ctx, io, runner)
+			case "reset":
+				return runReset(ctx, io, runner)
 			case "status":
 				return runStatus(ctx, io, runner)
 			default:
@@ -64,6 +66,22 @@ func runDown(ctx context.Context, io cli.IO, runner Runner) error {
 		return nil
 	}
 	fmt.Fprintf(stdout, "Rolled back %d %s\n", result.Version, result.Source)
+	return nil
+}
+
+func runReset(ctx context.Context, io cli.IO, runner Runner) error {
+	stdout := output(io.Stdout)
+	results, err := runner.Reset(ctx)
+	if err != nil {
+		return err
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(stdout, "No migrations to reset.")
+		return nil
+	}
+	for _, result := range results {
+		fmt.Fprintf(stdout, "Rolled back %d %s\n", result.Version, result.Source)
+	}
 	return nil
 }
 

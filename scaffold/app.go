@@ -161,6 +161,7 @@ type appData struct {
 	DriverName      string
 	DriverVersion   string
 	MigrateDialect  string
+	SQLCEngine      string
 	DatabaseTags    string
 	DatabaseSummary string
 }
@@ -180,6 +181,7 @@ func newAppData(cfg App) (appData, error) {
 		data.DriverName = postgresDriverName
 		data.DriverVersion = postgresDriverVersion
 		data.MigrateDialect = "migrate.DialectPostgres"
+		data.SQLCEngine = "postgresql"
 		data.DatabaseTags = `env:"DATABASE_URL,required"`
 		data.DatabaseSummary = "Postgres via pgx"
 	case DatabaseSQLite:
@@ -188,6 +190,7 @@ func newAppData(cfg App) (appData, error) {
 		data.DriverName = sqliteDriverName
 		data.DriverVersion = sqliteDriverVersion
 		data.MigrateDialect = "migrate.DialectSQLite"
+		data.SQLCEngine = "sqlite"
 		data.DatabaseTags = fmt.Sprintf(`env:"DATABASE_URL" default:%q`, sqliteDefaultURL)
 		data.DatabaseSummary = "SQLite via modernc.org/sqlite"
 	default:
