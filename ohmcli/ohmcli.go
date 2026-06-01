@@ -52,7 +52,7 @@ func generateCommand() cli.Command {
 	return cli.Command{
 		Name:    "generate",
 		Summary: "generate application code",
-		Usage:   "generate <handler|migration> [args]",
+		Usage:   "generate <handler|migration|test-from-replay> [args]",
 		Run: func(_ context.Context, commandIO cli.IO, args []string) error {
 			commandIO = withIODefaults(commandIO)
 			if len(args) == 0 {
@@ -95,6 +95,20 @@ func generateCommand() cli.Command {
 					return err
 				}
 				fmt.Fprintf(commandIO.Stdout, "Created %s\n", path)
+				return nil
+			case "test-from-replay":
+				parsed, err := parseReplayTestArgs(args[1:])
+				if err != nil {
+					return err
+				}
+				result, err := scaffold.GenerateReplayTest(scaffold.ReplayTest{
+					SnapshotPath: parsed.snapshotPath,
+					Dir:          parsed.dir,
+				})
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(commandIO.Stdout, "Created %s\n", result.CreatedFile)
 				return nil
 			default:
 				return fmt.Errorf("%w: unknown generator %q", cli.ErrUsage, args[0])
@@ -158,6 +172,44 @@ type migrationArgs namedDirArgs
 func parseMigrationArgs(args []string) (migrationArgs, error) {
 	parsed, err := parseNamedDirArgs("migration", args)
 	return migrationArgs(parsed), err
+}
+
+type replayTestArgs struct {
+	snapshotPath string
+	dir          string
+}
+
+func parseReplayTestArgs(args []string) (replayTestArgs, error) {
+	parsed := replayTestArgs{}
+	var positionals []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case isHelpArg(arg):
+			return replayTestArgs{}, cli.ErrHelp
+		case arg == "-dir" || arg == "--dir":
+			value, ok := nextArg(args, &i)
+			if !ok {
+				return replayTestArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
+			}
+			parsed.dir = value
+		case strings.HasPrefix(arg, "-dir="):
+			parsed.dir = strings.TrimPrefix(arg, "-dir=")
+		case strings.HasPrefix(arg, "--dir="):
+			parsed.dir = strings.TrimPrefix(arg, "--dir=")
+		case strings.HasPrefix(arg, "-"):
+			return replayTestArgs{}, fmt.Errorf("%w: unknown test-from-replay flag %q", cli.ErrUsage, arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+
+	if len(positionals) != 1 {
+		return replayTestArgs{}, fmt.Errorf("%w: test-from-replay requires exactly one snapshot path", cli.ErrUsage)
+	}
+	parsed.snapshotPath = positionals[0]
+	return parsed, nil
 }
 
 func parseNamedDirArgs(generator string, args []string) (namedDirArgs, error) {

@@ -3,13 +3,16 @@ package ohmcli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mgomes/ohm/cli"
+	"github.com/mgomes/ohm/replay"
 	"github.com/mgomes/ohm/scaffold"
 )
 
@@ -114,6 +117,46 @@ func TestGenerateHandlerCommandCreatesHandlerWithFlagsAfterName(t *testing.T) {
 	}
 }
 
+func TestGenerateTestFromReplayCommandCreatesReplayTest(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "journal")
+	if err := scaffold.GenerateApp(scaffold.App{
+		Destination: destination,
+		Module:      "example.com/journal",
+		Database:    scaffold.DatabaseSQLite,
+		OhmVersion:  "v0.0.0",
+	}); err != nil {
+		t.Fatalf("GenerateApp(journal) error = %v, want nil", err)
+	}
+	snapshotPath := filepath.Join(destination, "tmp", "replays", "home.json")
+	writeCLIReplaySnapshot(t, snapshotPath, replay.Snapshot{
+		Version: 1,
+		Method:  http.MethodGet,
+		Path:    "/",
+		ExpectedResponse: &replay.ExpectedResponse{
+			Status: http.StatusOK,
+		},
+	})
+
+	t.Chdir(destination)
+
+	var stdout bytes.Buffer
+	program := New(WithIO(cli.IO{Stdout: &stdout}))
+
+	args := []string{"generate", "test-from-replay", snapshotPath, "--dir", "internal/replaytests"}
+	err := program.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Program.Run(%v) error = %v, want nil", args, err)
+	}
+
+	testPath := filepath.Join("internal", "replaytests", "home_replay_test.go")
+	if _, err := os.Stat(testPath); err != nil {
+		t.Fatalf("Program.Run(%v) generated %s stat error = %v, want nil", args, testPath, err)
+	}
+	if !strings.Contains(stdout.String(), "Created "+testPath) {
+		t.Errorf("Program.Run(%v) stdout = %q, want generated replay test path", args, stdout.String())
+	}
+}
+
 func TestGenerateMigrationCommandRejectsUnknownGenerator(t *testing.T) {
 	program := New()
 
@@ -186,5 +229,21 @@ func TestNewCommandAcceptsExplicitOhmVersion(t *testing.T) {
 	}
 	if !strings.Contains(string(goMod), "github.com/mgomes/ohm v0.1.2") {
 		t.Errorf("Program.Run(%v) generated go.mod = %q, want explicit Ohm version", args, goMod)
+	}
+}
+
+func writeCLIReplaySnapshot(t *testing.T, path string, snapshot replay.Snapshot) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(%q) error = %v, want nil", filepath.Dir(path), err)
+	}
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent(snapshot) error = %v, want nil", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", path, err)
 	}
 }

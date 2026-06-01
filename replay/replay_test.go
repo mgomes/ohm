@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +89,54 @@ func TestRunReplaysSnapshotThroughHandler(t *testing.T) {
 	}
 	if got["filter"] != "recent" {
 		t.Errorf("Run(app, snapshot) filter = %q, want %q", got["filter"], "recent")
+	}
+}
+
+func TestExpectedResponseFromCapturesStableResponseFields(t *testing.T) {
+	response := httptest.NewRecorder()
+	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	response.Header().Set("Location", "/posts")
+	response.Header().Set("Set-Cookie", "session=secret")
+	response.WriteHeader(http.StatusCreated)
+	response.Body = bytes.NewBufferString("created")
+
+	got, err := ExpectedResponseFrom(response)
+	if err != nil {
+		t.Fatalf("ExpectedResponseFrom(response) error = %v, want nil", err)
+	}
+
+	if got.Status != http.StatusCreated {
+		t.Errorf("ExpectedResponseFrom(response) Status = %d, want %d", got.Status, http.StatusCreated)
+	}
+	if string(got.Body) != "created" {
+		t.Errorf("ExpectedResponseFrom(response) Body = %q, want %q", got.Body, "created")
+	}
+	if got.Headers["Content-Type"][0] != "text/plain; charset=utf-8" {
+		t.Errorf("ExpectedResponseFrom(response) Content-Type = %v, want text/plain", got.Headers["Content-Type"])
+	}
+	if _, ok := got.Headers["Location"]; ok {
+		t.Errorf("ExpectedResponseFrom(response) Location present = true, want false")
+	}
+	if _, ok := got.Headers["Set-Cookie"]; ok {
+		t.Errorf("ExpectedResponseFrom(response) Set-Cookie present = true, want false")
+	}
+}
+
+func TestExpectedResponseFromHandlesUnrecordedBody(t *testing.T) {
+	response := httptest.NewRecorder()
+	response.Body = nil
+	response.WriteHeader(http.StatusNoContent)
+
+	got, err := ExpectedResponseFrom(response)
+	if err != nil {
+		t.Fatalf("ExpectedResponseFrom(response without body recorder) error = %v, want nil", err)
+	}
+
+	if got.Status != http.StatusNoContent {
+		t.Errorf("ExpectedResponseFrom(response without body recorder) Status = %d, want %d", got.Status, http.StatusNoContent)
+	}
+	if !got.BodyOmitted {
+		t.Errorf("ExpectedResponseFrom(response without body recorder) BodyOmitted = false, want true")
 	}
 }
 
