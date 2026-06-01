@@ -14,6 +14,8 @@ import (
 )
 
 const (
+	templModule           = "github.com/a-h/templ"
+	templVersion          = "v0.3.1020"
 	postgresDriverModule  = "github.com/jackc/pgx/v5"
 	postgresDriverImport  = "github.com/jackc/pgx/v5/stdlib"
 	postgresDriverName    = "pgx"
@@ -156,6 +158,8 @@ type appData struct {
 	Title           string
 	Module          string
 	OhmVersion      string
+	TemplModule     string
+	TemplVersion    string
 	DriverModule    string
 	DriverImport    string
 	DriverName      string
@@ -168,10 +172,12 @@ type appData struct {
 
 func newAppData(cfg App) (appData, error) {
 	data := appData{
-		Name:       cfg.Name,
-		Title:      titleName(cfg.Name),
-		Module:     cfg.Module,
-		OhmVersion: cfg.OhmVersion,
+		Name:         cfg.Name,
+		Title:        titleName(cfg.Name),
+		Module:       cfg.Module,
+		OhmVersion:   cfg.OhmVersion,
+		TemplModule:  templModule,
+		TemplVersion: templVersion,
 	}
 
 	switch cfg.Database {
