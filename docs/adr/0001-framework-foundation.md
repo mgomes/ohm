@@ -42,6 +42,13 @@ Ohm will use these defaults:
 - Postgres as the default database, using `pgx`.
 - SQLite as an explicit generator option for smaller apps and tests.
 
+Ohm should eventually hide `chi` and most direct `net/http` usage behind
+framework-level routing, handler, middleware, rendering, and error APIs. This
+does not mean replacing Go's HTTP model with magic. It means application code
+should usually speak Ohm while advanced users retain escape hatches to ordinary
+`http.Handler`, `http.Request`, `http.ResponseWriter`, and chi internals where
+needed.
+
 Ohm will use `handlers` as the HTTP boundary name instead of `controllers`.
 The initial application architecture is:
 
@@ -95,7 +102,7 @@ shutdown, observability, and scheduling.
 ## Initial Non-Goals
 
 - Build a framework-specific ORM.
-- Hide `net/http`, `chi`, or ordinary Go package boundaries.
+- Obscure Go's HTTP model with magical runtime behavior.
 - Include background jobs in the first version.
 - Preserve backwards compatibility before the framework has a stable public API.
 - Add local hacks or adapters that paper over missing framework design.
@@ -108,3 +115,4 @@ shutdown, observability, and scheduling.
 - View system selection and layout/component conventions.
 - Database package boundaries, transactions, sqlc layout, and migrations.
 - Testing strategy for generated applications and framework internals.
+- HTTP abstraction boundaries and escape hatches.
