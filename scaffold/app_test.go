@@ -58,7 +58,7 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(justfile, "test-integration:") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want test-integration task", justfile)
 	}
-	if !strings.Contains(justfile, "check: fmt-check tidy-check vet test") {
+	if !strings.Contains(justfile, "check: fmt-check tidy vet test") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want check task to run closed-loop checks", justfile)
 	}
 }

@@ -237,6 +237,6 @@ tidy:
 tidy-check:
     go mod tidy -diff
 
-check: fmt-check tidy-check vet test
+check: fmt-check tidy vet test
 `,
 }
