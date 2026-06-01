@@ -168,6 +168,7 @@ type appData struct {
 	SQLCEngine         string
 	DatabaseTags       string
 	ExampleDatabaseURL string
+	IsSQLite           bool
 	TestDatabaseURL    string
 	DatabaseSummary    string
 }
@@ -203,6 +204,7 @@ func newAppData(cfg App) (appData, error) {
 		data.SQLCEngine = "sqlite"
 		data.DatabaseTags = fmt.Sprintf(`env:"DATABASE_URL" default:%q`, sqliteDefaultURL)
 		data.ExampleDatabaseURL = sqliteDefaultURL
+		data.IsSQLite = true
 		data.TestDatabaseURL = "file:test.db"
 		data.DatabaseSummary = "SQLite via modernc.org/sqlite"
 	default:
