@@ -158,6 +158,77 @@ func hasRoute(routes []ohm.Route, method string, pattern string) bool {
 	return false
 }
 `,
+	"internal/apptest/apptest.go": `package apptest
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{.Module}}/internal/app"
+)
+
+type Client struct {
+	t       testing.TB
+	handler http.Handler
+}
+
+func New(t testing.TB, opts ...app.Option) *Client {
+	t.Helper()
+
+	return &Client{
+		t:       t,
+		handler: app.New(opts...).HTTPHandler(),
+	}
+}
+
+func (c *Client) Get(target string) *httptest.ResponseRecorder {
+	c.t.Helper()
+
+	return c.Request(http.MethodGet, target, nil)
+}
+
+func (c *Client) Request(method string, target string, body io.Reader) *httptest.ResponseRecorder {
+	c.t.Helper()
+
+	request := httptest.NewRequest(method, target, body)
+	response := httptest.NewRecorder()
+	c.handler.ServeHTTP(response, request)
+	return response
+}
+`,
+	"internal/apptest/apptest_test.go": `package apptest
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+)
+
+func TestClientGetExercisesApplicationRoute(t *testing.T) {
+	client := New(t)
+
+	response := client.Get("/")
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("Client.Get(%q) status = %d, want %d", "/", response.Code, http.StatusOK)
+	}
+	if !strings.Contains(response.Body.String(), "<h1>Welcome to {{.Title}}</h1>") {
+		t.Errorf("Client.Get(%q) body = %q, want home page", "/", response.Body.String())
+	}
+}
+
+func TestClientRequestReportsMissingRoute(t *testing.T) {
+	client := New(t)
+
+	response := client.Request(http.MethodGet, "/missing", nil)
+
+	if response.Code != http.StatusNotFound {
+		t.Errorf("Client.Request(%q, %q, nil) status = %d, want %d", http.MethodGet, "/missing", response.Code, http.StatusNotFound)
+	}
+}
+`,
 	"internal/db/db.go": `package db
 
 import (
