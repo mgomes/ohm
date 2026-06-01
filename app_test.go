@@ -87,6 +87,32 @@ func TestAppDefaultErrorHandlerDoesNotExposeWrappedInternalError(t *testing.T) {
 	}
 }
 
+func TestErrorResponseUsesHTTPErrorPublicMessage(t *testing.T) {
+	err := NewHTTPError(http.StatusNotFound, "post not found", errors.New("missing post"))
+
+	status, message := ErrorResponse(err)
+
+	if status != http.StatusNotFound {
+		t.Errorf("ErrorResponse(%v) status = %d, want %d", err, status, http.StatusNotFound)
+	}
+	if message != "post not found" {
+		t.Errorf("ErrorResponse(%v) message = %q, want %q", err, message, "post not found")
+	}
+}
+
+func TestErrorResponseDoesNotExposeUnexpectedErrors(t *testing.T) {
+	err := errors.New("database password leaked")
+
+	status, message := ErrorResponse(err)
+
+	if status != http.StatusInternalServerError {
+		t.Errorf("ErrorResponse(%v) status = %d, want %d", err, status, http.StatusInternalServerError)
+	}
+	if message != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("ErrorResponse(%v) message = %q, want %q", err, message, http.StatusText(http.StatusInternalServerError))
+	}
+}
+
 func TestRequestNoContentRendersNoContent(t *testing.T) {
 	app := New()
 	app.Delete("/posts/{id}", func(req *Request) error {

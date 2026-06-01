@@ -41,6 +41,13 @@ func NewHTTPError(status int, message string, err error) *HTTPError {
 
 // DefaultErrorHandler renders handler errors as plain text through chi/render.
 func DefaultErrorHandler(req *Request, err error) {
+	status, message := ErrorResponse(err)
+	render.Status(req.HTTPRequest(), status)
+	render.PlainText(req.ResponseWriter(), req.HTTPRequest(), message)
+}
+
+// ErrorResponse returns the safe HTTP status and public message for err.
+func ErrorResponse(err error) (int, string) {
 	status := http.StatusInternalServerError
 	message := http.StatusText(status)
 
@@ -53,8 +60,7 @@ func DefaultErrorHandler(req *Request, err error) {
 		}
 	}
 
-	render.Status(req.HTTPRequest(), status)
-	render.PlainText(req.ResponseWriter(), req.HTTPRequest(), message)
+	return status, message
 }
 
 func (e *HTTPError) responseStatus() int {

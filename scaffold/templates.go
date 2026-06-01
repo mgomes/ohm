@@ -87,22 +87,55 @@ func New(opts ...Option) *ohm.App {
 	}
 
 	logger := slog.New(scrub.NewHandler(slog.NewJSONHandler(os.Stderr, nil)))
-	application := ohm.New()
+	application := ohm.New(ohm.WithErrorHandler(handleError))
 	application.Use(ohm.RequestLogger(logger), ohm.Recoverer(logger))
 	assets := http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.staticRoot)))
 	application.ChiRouter().Get("/assets/*", assets.ServeHTTP)
 	application.ChiRouter().Head("/assets/*", assets.ServeHTTP)
+	application.ChiRouter().NotFound(notFound)
+	application.ChiRouter().MethodNotAllowed(methodNotAllowed)
 	handlers.Register(application)
 	return application
+}
+`,
+	"internal/app/errors.go": `package app
+
+import (
+	"net/http"
+
+	"github.com/mgomes/ohm"
+
+	"{{.Module}}/internal/views/pages"
+)
+
+func handleError(req *ohm.Request, err error) {
+	status, message := ohm.ErrorResponse(err)
+	renderError(req.ResponseWriter(), req.HTTPRequest(), status, message)
+}
+
+func notFound(w http.ResponseWriter, r *http.Request) {
+	renderError(w, r, http.StatusNotFound, http.StatusText(http.StatusNotFound))
+}
+
+func methodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	renderError(w, r, http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed))
+}
+
+func renderError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if err := ohm.RenderHTML(w, r, status, pages.Error(status, message)); err != nil {
+		http.Error(w, message, status)
+	}
 }
 `,
 	"internal/app/app_test.go": `package app
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mgomes/ohm"
@@ -146,6 +179,52 @@ func TestNewServesStaticAssets(t *testing.T) {
 
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) status = %d, want %d", staticRoot, request.Method, request.URL.Path, response.Code, http.StatusMethodNotAllowed)
+	}
+	if !strings.Contains(response.Body.String(), "<h1>Method Not Allowed</h1>") {
+		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) body = %q, want method not allowed page", staticRoot, request.Method, request.URL.Path, response.Body.String())
+	}
+}
+
+func TestNewRendersHandlerErrorPage(t *testing.T) {
+	application := New()
+	application.Get("/posts/42", func(req *ohm.Request) error {
+		return ohm.NewHTTPError(http.StatusNotFound, "Post not found", errors.New("missing post"))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/posts/42", nil)
+
+	application.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Errorf("New().ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusNotFound)
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("New().ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/html; charset=utf-8")
+	}
+	if !strings.Contains(response.Body.String(), "<h1>Post not found</h1>") {
+		t.Errorf("New().ServeHTTP(%s %s) body = %q, want error page", request.Method, request.URL.Path, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "missing post") {
+		t.Errorf("New().ServeHTTP(%s %s) body = %q, want no wrapped error detail", request.Method, request.URL.Path, response.Body.String())
+	}
+}
+
+func TestNewRendersMissingRouteErrorPage(t *testing.T) {
+	application := New()
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/missing", nil)
+
+	application.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Errorf("New().ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusNotFound)
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("New().ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/html; charset=utf-8")
+	}
+	if !strings.Contains(response.Body.String(), "<h1>Not Found</h1>") {
+		t.Errorf("New().ServeHTTP(%s %s) body = %q, want not found page", request.Method, request.URL.Path, response.Body.String())
 	}
 }
 
@@ -226,6 +305,9 @@ func TestClientRequestReportsMissingRoute(t *testing.T) {
 
 	if response.Code != http.StatusNotFound {
 		t.Errorf("Client.Request(%q, %q, nil) status = %d, want %d", http.MethodGet, "/missing", response.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(response.Body.String(), "<h1>Not Found</h1>") {
+		t.Errorf("Client.Request(%q, %q, nil) body = %q, want not found page", http.MethodGet, "/missing", response.Body.String())
 	}
 }
 `,
@@ -643,6 +725,136 @@ func Application(title string) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</main></body></html>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		return nil
+	})
+}
+
+var _ = templruntime.GeneratedTemplate
+`,
+	"internal/views/pages/error.templ": `package pages
+
+import (
+	"strconv"
+
+	"{{.Module}}/internal/views/layouts"
+)
+
+templ Error(status int, message string) {
+	@layouts.Application(message) {
+		<h1>{ message }</h1>
+		<p>{ "HTTP " + strconv.Itoa(status) }</p>
+	}
+}
+`,
+	"internal/views/pages/error_test.go": `package pages
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestErrorRendersApplicationLayout(t *testing.T) {
+	var body strings.Builder
+	if err := Error(404, "Not Found").Render(context.Background(), &body); err != nil {
+		t.Fatalf("Error(status, message).Render(ctx, w) error = %v, want nil", err)
+	}
+	if !strings.Contains(body.String(), "<title>Not Found</title>") {
+		t.Errorf("Error(status, message) body = %q, want page title", body.String())
+	}
+	if !strings.Contains(body.String(), "<h1>Not Found</h1>") {
+		t.Errorf("Error(status, message) body = %q, want heading", body.String())
+	}
+	if !strings.Contains(body.String(), "<p>HTTP 404</p>") {
+		t.Errorf("Error(status, message) body = %q, want status code", body.String())
+	}
+}
+`,
+	"internal/views/pages/error_templ.go": `// Code generated by templ - DO NOT EDIT.
+
+// templ: version: {{.TemplVersion}}
+package pages
+
+//lint:file-ignore SA4006 This context is only used if a nested component is present.
+
+import "github.com/a-h/templ"
+import templruntime "github.com/a-h/templ/runtime"
+
+import (
+	"strconv"
+
+	"{{.Module}}/internal/views/layouts"
+)
+
+func Error(status int, message string) templ.Component {
+	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
+			return templ_7745c5c3_CtxErr
+		}
+		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+		if !templ_7745c5c3_IsBuffer {
+			defer func() {
+				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err == nil {
+					templ_7745c5c3_Err = templ_7745c5c3_BufErr
+				}
+			}()
+		}
+		ctx = templ.InitializeContext(ctx)
+		templ_7745c5c3_Var1 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var1 == nil {
+			templ_7745c5c3_Var1 = templ.NopComponent
+		}
+		ctx = templ.ClearChildren(ctx)
+		templ_7745c5c3_Var2 := templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
+			templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
+			templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
+			if !templ_7745c5c3_IsBuffer {
+				defer func() {
+					templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
+					if templ_7745c5c3_Err == nil {
+						templ_7745c5c3_Err = templ_7745c5c3_BufErr
+					}
+				}()
+			}
+			ctx = templ.InitializeContext(ctx)
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<h1>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var3 string
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(message)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: ` + "`internal/views/pages/error.templ`" + `, Line: 11, Col: 15}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</h1><p>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var4 string
+			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs("HTTP " + strconv.Itoa(status))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: ` + "`internal/views/pages/error.templ`" + `, Line: 12, Col: 37}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</p>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			return nil
+		})
+		templ_7745c5c3_Err = layouts.Application(message).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
