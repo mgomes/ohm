@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"github.com/mgomes/ohm/cli"
+	"github.com/mgomes/ohm/replay"
 
 	"{{.Module}}/internal/app"
 	"{{.Module}}/internal/db"
@@ -36,6 +37,7 @@ func run(ctx context.Context, args []string) error {
 		cli.ServerCommand(application.HTTPHandler()),
 		cli.RoutesCommand(application),
 		db.MigrateCommand(),
+		replay.Command(application.HTTPHandler()),
 	})
 	return program.Run(ctx, args)
 }
@@ -53,7 +55,7 @@ import (
 )
 
 func New() *ohm.App {
-	logger := slog.New(scrub.NewHandler(slog.NewJSONHandler(os.Stdout, nil)))
+	logger := slog.New(scrub.NewHandler(slog.NewJSONHandler(os.Stderr, nil)))
 	application := ohm.New()
 	application.Use(ohm.RequestLogger(logger))
 	handlers.Register(application)

@@ -61,6 +61,11 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(justfile, "check: fmt-check tidy vet test") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want check task to run closed-loop checks", justfile)
 	}
+
+	appFile := readFile(t, filepath.Join(destination, "internal", "app", "app.go"))
+	if !strings.Contains(appFile, "slog.NewJSONHandler(os.Stderr, nil)") {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want request logs on stderr", appFile)
+	}
 }
 
 func TestGenerateAppWritesPostgresApplicationByDefault(t *testing.T) {
