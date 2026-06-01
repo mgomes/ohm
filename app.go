@@ -144,17 +144,19 @@ func AllowedMethods(routes chi.Routes, path string) []string {
 		return nil
 	}
 
-	methods := []string{
-		http.MethodConnect,
-		http.MethodDelete,
-		http.MethodGet,
-		http.MethodHead,
-		http.MethodOptions,
-		http.MethodPatch,
-		http.MethodPost,
-		http.MethodPut,
-		http.MethodTrace,
+	seen := map[string]struct{}{}
+	var methods []string
+	if err := chi.Walk(routes, func(method string, _ string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if _, ok := seen[method]; ok {
+			return nil
+		}
+		seen[method] = struct{}{}
+		methods = append(methods, method)
+		return nil
+	}); err != nil {
+		return nil
 	}
+	slices.Sort(methods)
 
 	var allowed []string
 	for _, method := range methods {
