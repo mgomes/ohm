@@ -57,7 +57,7 @@ import (
 func New() *ohm.App {
 	logger := slog.New(scrub.NewHandler(slog.NewJSONHandler(os.Stderr, nil)))
 	application := ohm.New()
-	application.Use(ohm.RequestLogger(logger))
+	application.Use(ohm.RequestLogger(logger), ohm.Recoverer(logger))
 	handlers.Register(application)
 	return application
 }
