@@ -1,6 +1,13 @@
 package scaffold
 
 var appTemplates = map[string]string{
+	".env.example": `# Shared values loaded for every OHM_ENV.
+# Put environment-specific database settings in .env.development or .env.test.
+`,
+	".env.development.example": `DATABASE_URL={{.ExampleDatabaseURL}}
+`,
+	".env.test.example": `DATABASE_URL={{.TestDatabaseURL}}
+`,
 	"go.mod": `module {{.Module}}
 
 go 1.25.0
