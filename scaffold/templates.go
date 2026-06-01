@@ -182,7 +182,11 @@ func TestHome(t *testing.T) {
 
 This app uses goose migrations against {{.DatabaseSummary}}.
 
-Add timestamped goose SQL migration files to this directory.
+Create migration files with:
+
+` + "```text" + `
+ohm generate migration create_posts
+` + "```" + `
 `,
 	"static/README.md": `# Static Assets
 
