@@ -29,6 +29,8 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"cmd/journal/main.go",
 		"internal/app/app.go",
 		"internal/app/app_test.go",
+		"internal/apptest/apptest.go",
+		"internal/apptest/apptest_test.go",
 		"internal/db/command.go",
 		"internal/db/command_test.go",
 		"internal/db/db.go",
@@ -213,6 +215,14 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 
 	if !strings.Contains(appTestFile, `hasRoute(routes, "GET", "/")`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app_test.go = %q, want home route smoke test", appTestFile)
+	}
+
+	appTestHelper := readFile(t, filepath.Join(destination, "internal", "apptest", "apptest.go"))
+	if !strings.Contains(appTestHelper, `"example.com/journal/internal/app"`) {
+		t.Errorf("GenerateApp(sqlite app) internal/apptest/apptest.go = %q, want generated app import", appTestHelper)
+	}
+	if !strings.Contains(appTestHelper, `func (c *Client) Request(method string, target string, body io.Reader) *httptest.ResponseRecorder`) {
+		t.Errorf("GenerateApp(sqlite app) internal/apptest/apptest.go = %q, want request helper", appTestHelper)
 	}
 
 	viewTest := readFile(t, filepath.Join(destination, "internal", "views", "pages", "home_test.go"))
