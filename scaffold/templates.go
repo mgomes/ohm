@@ -90,10 +90,13 @@ func New(opts ...Option) *ohm.App {
 	application := ohm.New(ohm.WithErrorHandler(handleError))
 	application.Use(ohm.RequestLogger(logger), ohm.Recoverer(logger))
 	assets := http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.staticRoot)))
-	application.ChiRouter().Get("/assets/*", assets.ServeHTTP)
-	application.ChiRouter().Head("/assets/*", assets.ServeHTTP)
-	application.ChiRouter().NotFound(notFound)
-	application.ChiRouter().MethodNotAllowed(methodNotAllowed)
+	router := application.ChiRouter()
+	router.Get("/assets/*", assets.ServeHTTP)
+	router.Head("/assets/*", assets.ServeHTTP)
+	router.NotFound(notFound)
+	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		methodNotAllowed(w, r, ohm.AllowedMethods(router, r.URL.Path))
+	})
 	handlers.Register(application)
 	return application
 }
@@ -117,7 +120,10 @@ func notFound(w http.ResponseWriter, r *http.Request) {
 	renderError(w, r, http.StatusNotFound, http.StatusText(http.StatusNotFound))
 }
 
-func methodNotAllowed(w http.ResponseWriter, r *http.Request) {
+func methodNotAllowed(w http.ResponseWriter, r *http.Request, allowedMethods []string) {
+	for _, method := range allowedMethods {
+		w.Header().Add("Allow", method)
+	}
 	renderError(w, r, http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed))
 }
 
@@ -135,6 +141,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -179,6 +186,9 @@ func TestNewServesStaticAssets(t *testing.T) {
 
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) status = %d, want %d", staticRoot, request.Method, request.URL.Path, response.Code, http.StatusMethodNotAllowed)
+	}
+	if got, want := response.Header().Values("Allow"), []string{http.MethodGet, http.MethodHead}; !slices.Equal(got, want) {
+		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) Allow header = %v, want %v", staticRoot, request.Method, request.URL.Path, got, want)
 	}
 	if !strings.Contains(response.Body.String(), "<h1>Method Not Allowed</h1>") {
 		t.Errorf("New(WithStaticRoot(%q)).ServeHTTP(%s %s) body = %q, want method not allowed page", staticRoot, request.Method, request.URL.Path, response.Body.String())

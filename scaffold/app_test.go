@@ -194,14 +194,20 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(appFile, `ohm.New(ohm.WithErrorHandler(handleError))`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want HTML error handler", appFile)
 	}
-	if !strings.Contains(appFile, `application.ChiRouter().Get("/assets/*", assets.ServeHTTP)`) {
+	if !strings.Contains(appFile, `router := application.ChiRouter()`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want shared chi router binding", appFile)
+	}
+	if !strings.Contains(appFile, `router.Get("/assets/*", assets.ServeHTTP)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want GET static asset route", appFile)
 	}
-	if !strings.Contains(appFile, `application.ChiRouter().Head("/assets/*", assets.ServeHTTP)`) {
+	if !strings.Contains(appFile, `router.Head("/assets/*", assets.ServeHTTP)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want HEAD static asset route", appFile)
 	}
-	if !strings.Contains(appFile, `application.ChiRouter().NotFound(notFound)`) {
+	if !strings.Contains(appFile, `router.NotFound(notFound)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want not found error page", appFile)
+	}
+	if !strings.Contains(appFile, `methodNotAllowed(w, r, ohm.AllowedMethods(router, r.URL.Path))`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want method not allowed header preservation", appFile)
 	}
 
 	appErrorFile := readFile(t, filepath.Join(destination, "internal", "app", "errors.go"))
@@ -210,6 +216,9 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	}
 	if !strings.Contains(appErrorFile, `pages.Error(status, message)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/errors.go = %q, want error page rendering", appErrorFile)
+	}
+	if !strings.Contains(appErrorFile, `w.Header().Add("Allow", method)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/errors.go = %q, want Allow header rendering", appErrorFile)
 	}
 
 	appTestFile := readFile(t, filepath.Join(destination, "internal", "app", "app_test.go"))

@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/a-h/templ"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
@@ -277,5 +279,18 @@ func TestAppRoutesReturnsRegisteredRoutes(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("App.Routes()[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+func TestAllowedMethodsReturnsMatchingRouteMethods(t *testing.T) {
+	router := chi.NewRouter()
+	router.Get("/assets/*", func(http.ResponseWriter, *http.Request) {})
+	router.Head("/assets/*", func(http.ResponseWriter, *http.Request) {})
+
+	got := AllowedMethods(router, "/assets/app.css")
+	want := []string{http.MethodGet, http.MethodHead}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("AllowedMethods(router, %q) = %v, want %v", "/assets/app.css", got, want)
 	}
 }
