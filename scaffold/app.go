@@ -167,6 +167,7 @@ type appData struct {
 	MigrateDialect  string
 	SQLCEngine      string
 	DatabaseTags    string
+	TestDatabaseURL string
 	DatabaseSummary string
 }
 
@@ -189,6 +190,7 @@ func newAppData(cfg App) (appData, error) {
 		data.MigrateDialect = "migrate.DialectPostgres"
 		data.SQLCEngine = "postgresql"
 		data.DatabaseTags = `env:"DATABASE_URL,required"`
+		data.TestDatabaseURL = "postgres://localhost/test?sslmode=disable"
 		data.DatabaseSummary = "Postgres via pgx"
 	case DatabaseSQLite:
 		data.DriverModule = sqliteDriverModule
@@ -198,6 +200,7 @@ func newAppData(cfg App) (appData, error) {
 		data.MigrateDialect = "migrate.DialectSQLite"
 		data.SQLCEngine = "sqlite"
 		data.DatabaseTags = fmt.Sprintf(`env:"DATABASE_URL" default:%q`, sqliteDefaultURL)
+		data.TestDatabaseURL = "file:test.db"
 		data.DatabaseSummary = "SQLite via modernc.org/sqlite"
 	default:
 		return appData{}, fmt.Errorf("%w: %q", ErrUnsupportedDatabase, cfg.Database)

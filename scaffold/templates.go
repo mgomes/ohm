@@ -63,6 +63,35 @@ func New() *ohm.App {
 	return application
 }
 `,
+	"internal/app/app_test.go": `package app
+
+import (
+	"testing"
+
+	"github.com/mgomes/ohm"
+)
+
+func TestNewRegistersHomeRoute(t *testing.T) {
+	application := New()
+
+	routes, err := application.Routes()
+	if err != nil {
+		t.Fatalf("New().Routes() error = %v, want nil", err)
+	}
+	if !hasRoute(routes, "GET", "/") {
+		t.Fatalf("New().Routes() = %+v, want GET /", routes)
+	}
+}
+
+func hasRoute(routes []ohm.Route, method string, pattern string) bool {
+	for _, route := range routes {
+		if route.Method == method && route.Pattern == pattern {
+			return true
+		}
+	}
+	return false
+}
+`,
 	"internal/db/db.go": `package db
 
 import (
@@ -135,6 +164,26 @@ func runMigrations(ctx context.Context, io cli.IO, args []string) (err error) {
 		return err
 	}
 	return migrate.Command(runner).Run(ctx, io, args)
+}
+`,
+	"internal/db/db_test.go": `package db
+
+import (
+	"testing"
+
+	"github.com/mgomes/ohm/config"
+)
+
+func TestConfigLoadsDatabaseURL(t *testing.T) {
+	t.Setenv("DATABASE_URL", "{{.TestDatabaseURL}}")
+
+	cfg, err := config.Load[Config](config.WithoutEnvFiles())
+	if err != nil {
+		t.Fatalf("config.Load[Config](WithoutEnvFiles()) error = %v, want nil", err)
+	}
+	if got := cfg.URL.Reveal(); got != "{{.TestDatabaseURL}}" {
+		t.Errorf("config.Load[Config](WithoutEnvFiles()) DATABASE_URL = %q, want %q", got, "{{.TestDatabaseURL}}")
+	}
 }
 `,
 	"internal/handlers/home.go": `package handlers
@@ -276,6 +325,27 @@ import "{{.Module}}/internal/views/layouts"
 templ Home(title string) {
 	@layouts.Application(title) {
 		<h1>{ "Welcome to " + title }</h1>
+	}
+}
+`,
+	"internal/views/pages/home_test.go": `package pages
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestHomeRendersApplicationLayout(t *testing.T) {
+	var body strings.Builder
+	if err := Home("{{.Title}}").Render(context.Background(), &body); err != nil {
+		t.Fatalf("Home(title).Render(ctx, w) error = %v, want nil", err)
+	}
+	if !strings.Contains(body.String(), "<title>{{.Title}}</title>") {
+		t.Errorf("Home(title) body = %q, want page title", body.String())
+	}
+	if !strings.Contains(body.String(), "<h1>Welcome to {{.Title}}</h1>") {
+		t.Errorf("Home(title) body = %q, want heading", body.String())
 	}
 }
 `,
