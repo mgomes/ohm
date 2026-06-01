@@ -91,6 +91,7 @@ func TestProgramRunPrintsCommandHelpAfterCommandFlags(t *testing.T) {
 	program := New("myapp", []Command{
 		ServerCommand(
 			http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+			WithAddr(":8080"),
 			WithServerRunner(func(context.Context, *http.Server, time.Duration) error {
 				t.Fatalf("server runner called for help argument")
 				return nil
@@ -103,7 +104,7 @@ func TestProgramRunPrintsCommandHelpAfterCommandFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Program.Run(%v) error = %v, want nil", args, err)
 	}
-	if !strings.Contains(stdout.String(), "Usage: myapp server [-addr :3000]") {
+	if !strings.Contains(stdout.String(), "Usage: myapp server [-addr :8080]") {
 		t.Errorf("Program.Run(%v) stdout = %q, want command usage", args, stdout.String())
 	}
 	if stderr.String() != "" {

@@ -68,7 +68,7 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 	return Command{
 		Name:    cfg.name,
 		Summary: "start the HTTP server",
-		Usage:   "server [-addr :3000]",
+		Usage:   fmt.Sprintf("server [-addr %s]", cfg.addr),
 		Run: func(ctx context.Context, commandIO IO, args []string) error {
 			commandIO = commandIO.withDefaults()
 			flags := flag.NewFlagSet(cfg.name, flag.ContinueOnError)
