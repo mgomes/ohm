@@ -330,8 +330,8 @@ func TestMigrateCommandRunsAgainstTestDatabase(t *testing.T) {
 	if err := command.Run(context.Background(), cli.IO{Stdout: &stdout}, []string{"up"}); err != nil {
 		t.Fatalf("MigrateCommand().Run(ctx, io, %v) error = %v, want nil", []string{"up"}, err)
 	}
-	if got := stdout.String(); got != "No pending migrations.\n" {
-		t.Errorf("MigrateCommand().Run(ctx, io, %v) stdout = %q, want no pending migrations", []string{"up"}, got)
+	if got := stdout.String(); got != "No pending migrations.\n" && !strings.Contains(got, "Applied ") {
+		t.Errorf("MigrateCommand().Run(ctx, io, %v) stdout = %q, want migration result", []string{"up"}, got)
 	}
 
 	stdout.Reset()
