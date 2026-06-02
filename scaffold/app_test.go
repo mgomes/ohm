@@ -44,6 +44,7 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/db/seeds.go",
 		"internal/handlers/home.go",
 		"internal/handlers/home_test.go",
+		"internal/services/README.md",
 		"internal/views/assets/assets.go",
 		"internal/views/assets/assets_test.go",
 		"internal/views/components/README.md",
@@ -259,6 +260,11 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	}
 	if !strings.Contains(homeFile, `return req.HTML(http.StatusOK, pages.Home("Journal"))`) {
 		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want HTML view rendering", homeFile)
+	}
+
+	servicesReadme := readFile(t, filepath.Join(destination, "internal", "services", "README.md"))
+	if !strings.Contains(servicesReadme, "business workflows") {
+		t.Errorf("GenerateApp(sqlite app) internal/services/README.md = %q, want service ownership guidance", servicesReadme)
 	}
 
 	homeView := readFile(t, filepath.Join(destination, "internal", "views", "pages", "home.templ"))
