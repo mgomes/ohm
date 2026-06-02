@@ -41,6 +41,7 @@ type Snapshot struct {
 	Headers          map[string][]string `json:"headers,omitempty"`
 	RequestID        string              `json:"request_id,omitempty"`
 	RoutePattern     string              `json:"route_pattern,omitempty"`
+	RouteParams      map[string]string   `json:"route_params,omitempty"`
 	CapturedAt       time.Time           `json:"captured_at"`
 	Body             []byte              `json:"body,omitempty"`
 	BodyOmitted      bool                `json:"body_omitted"`
@@ -130,6 +131,7 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 		Headers:      headers,
 		RequestID:    requestID,
 		RoutePattern: routePattern(r),
+		RouteParams:  routeParams(cfg.redactor, r),
 		CapturedAt:   cfg.now().UTC(),
 		BodyOmitted:  true,
 	}
@@ -328,6 +330,32 @@ func routePattern(r *http.Request) string {
 		return ""
 	}
 	return routeContext.RoutePattern()
+}
+
+func routeParams(redactor *scrub.Redactor, r *http.Request) map[string]string {
+	routeContext := chi.RouteContext(r.Context())
+	if routeContext == nil || len(routeContext.URLParams.Keys) == 0 {
+		return nil
+	}
+
+	params := make(map[string]string, len(routeContext.URLParams.Keys))
+	for i, key := range routeContext.URLParams.Keys {
+		if key == "" {
+			continue
+		}
+		value := ""
+		if i < len(routeContext.URLParams.Values) {
+			value = routeContext.URLParams.Values[i]
+		}
+		if redactor.SensitiveKey(key) {
+			value = fmt.Sprint(redactor.Any(key, value))
+		}
+		params[key] = value
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	return params
 }
 
 const maxInt64 = int64(^uint64(0) >> 1)
