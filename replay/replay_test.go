@@ -94,6 +94,37 @@ func TestCaptureIncludesScrubbedRouteParams(t *testing.T) {
 	}
 }
 
+func TestCaptureIncludesOptionalMetadata(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	featureFlags := map[string]string{
+		"checkout_redesign": "enabled",
+		"api_token":         "secret",
+	}
+
+	got, err := Capture(request,
+		WithApplicationVersion("v1.2.3"),
+		WithEnvironment("test"),
+		WithFeatureFlags(featureFlags),
+	)
+	if err != nil {
+		t.Fatalf("Capture(request, metadata options) error = %v, want nil", err)
+	}
+	featureFlags["checkout_redesign"] = "disabled"
+
+	if got.ApplicationVersion != "v1.2.3" {
+		t.Errorf("Capture(request, WithApplicationVersion(v1.2.3)) ApplicationVersion = %q, want %q", got.ApplicationVersion, "v1.2.3")
+	}
+	if got.Environment != "test" {
+		t.Errorf("Capture(request, WithEnvironment(test)) Environment = %q, want %q", got.Environment, "test")
+	}
+	if got.FeatureFlags["checkout_redesign"] != "enabled" {
+		t.Errorf("Capture(request, WithFeatureFlags(flags)) checkout_redesign = %q, want %q", got.FeatureFlags["checkout_redesign"], "enabled")
+	}
+	if got.FeatureFlags["api_token"] != "[REDACTED]" {
+		t.Errorf("Capture(request, WithFeatureFlags(flags)) api_token = %q, want [REDACTED]", got.FeatureFlags["api_token"])
+	}
+}
+
 func TestCaptureCapturesBodyWithinLimitAndRestoresRequestBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("title=hello"))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
