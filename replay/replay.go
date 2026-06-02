@@ -34,18 +34,21 @@ var defaultResponseHeaders = []string{
 
 // Snapshot captures enough request data to replay a handler request.
 type Snapshot struct {
-	Version          int                 `json:"version"`
-	Method           string              `json:"method"`
-	Path             string              `json:"path"`
-	Query            map[string][]string `json:"query,omitempty"`
-	Headers          map[string][]string `json:"headers,omitempty"`
-	RequestID        string              `json:"request_id,omitempty"`
-	RoutePattern     string              `json:"route_pattern,omitempty"`
-	RouteParams      map[string]string   `json:"route_params,omitempty"`
-	CapturedAt       time.Time           `json:"captured_at"`
-	Body             []byte              `json:"body,omitempty"`
-	BodyOmitted      bool                `json:"body_omitted"`
-	ExpectedResponse *ExpectedResponse   `json:"expected_response,omitempty"`
+	Version            int                 `json:"version"`
+	Method             string              `json:"method"`
+	Path               string              `json:"path"`
+	Query              map[string][]string `json:"query,omitempty"`
+	Headers            map[string][]string `json:"headers,omitempty"`
+	RequestID          string              `json:"request_id,omitempty"`
+	RoutePattern       string              `json:"route_pattern,omitempty"`
+	RouteParams        map[string]string   `json:"route_params,omitempty"`
+	ApplicationVersion string              `json:"application_version,omitempty"`
+	Environment        string              `json:"environment,omitempty"`
+	FeatureFlags       map[string]string   `json:"feature_flags,omitempty"`
+	CapturedAt         time.Time           `json:"captured_at"`
+	Body               []byte              `json:"body,omitempty"`
+	BodyOmitted        bool                `json:"body_omitted"`
+	ExpectedResponse   *ExpectedResponse   `json:"expected_response,omitempty"`
 }
 
 // ExpectedResponse captures the response assertions used by generated replay tests.
@@ -60,10 +63,13 @@ type ExpectedResponse struct {
 type Option func(*captureOptions)
 
 type captureOptions struct {
-	headers   []string
-	redactor  *scrub.Redactor
-	now       func() time.Time
-	bodyLimit int64
+	headers            []string
+	redactor           *scrub.Redactor
+	now                func() time.Time
+	bodyLimit          int64
+	applicationVersion string
+	environment        string
+	featureFlags       map[string]string
 }
 
 // WithHeaders configures the request headers captured into a snapshot.
@@ -100,6 +106,27 @@ func WithBodyLimit(limit int64) Option {
 	}
 }
 
+// WithApplicationVersion includes the application version in captured snapshots.
+func WithApplicationVersion(version string) Option {
+	return func(opts *captureOptions) {
+		opts.applicationVersion = version
+	}
+}
+
+// WithEnvironment includes the application environment in captured snapshots.
+func WithEnvironment(environment string) Option {
+	return func(opts *captureOptions) {
+		opts.environment = environment
+	}
+}
+
+// WithFeatureFlags includes scrubbed feature flag values in captured snapshots.
+func WithFeatureFlags(flags map[string]string) Option {
+	return func(opts *captureOptions) {
+		opts.featureFlags = cloneStringMap(flags)
+	}
+}
+
 // Capture creates a scrubbed request snapshot.
 func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 	if r == nil {
@@ -124,16 +151,19 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 	}
 
 	snapshot := Snapshot{
-		Version:      snapshotVersion,
-		Method:       r.Method,
-		Path:         r.URL.Path,
-		Query:        query,
-		Headers:      headers,
-		RequestID:    requestID,
-		RoutePattern: routePattern(r),
-		RouteParams:  routeParams(cfg.redactor, r),
-		CapturedAt:   cfg.now().UTC(),
-		BodyOmitted:  true,
+		Version:            snapshotVersion,
+		Method:             r.Method,
+		Path:               r.URL.Path,
+		Query:              query,
+		Headers:            headers,
+		RequestID:          requestID,
+		RoutePattern:       routePattern(r),
+		RouteParams:        routeParams(cfg.redactor, r),
+		ApplicationVersion: cfg.applicationVersion,
+		Environment:        cfg.environment,
+		FeatureFlags:       scrubFeatureFlags(cfg.redactor, cfg.featureFlags),
+		CapturedAt:         cfg.now().UTC(),
+		BodyOmitted:        true,
 	}
 	if cfg.bodyLimit >= 0 {
 		body, omitted, err := captureBody(r, cfg.bodyLimit)
@@ -356,6 +386,33 @@ func routeParams(redactor *scrub.Redactor, r *http.Request) map[string]string {
 		return nil
 	}
 	return params
+}
+
+func scrubFeatureFlags(redactor *scrub.Redactor, flags map[string]string) map[string]string {
+	if len(flags) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(flags))
+	for key, value := range flags {
+		if redactor.SensitiveKey(key) {
+			value = fmt.Sprint(redactor.Any(key, value))
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 const maxInt64 = int64(^uint64(0) >> 1)
