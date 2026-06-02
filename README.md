@@ -5,7 +5,7 @@
 # Ohm
 
 Ohm is a Go web framework for building server-rendered web apps with clear
-defaults and very little magic.
+defaults and ordinary Go code.
 
 It gives you the shape of a complete web app without hiding Go:
 
@@ -41,9 +41,9 @@ Check the installed version:
 ohm version
 ```
 
-## Start an App
+## Start an app
 
-SQLite is the fastest local start:
+Use SQLite for a local app that doesn't need Postgres:
 
 ```sh
 ohm new journal --db sqlite --module example.com/journal
@@ -63,7 +63,7 @@ ohm new journal --db postgres --module example.com/journal
 Set `DATABASE_URL` in `.env.development` and `.env.test`, then run the same
 checks.
 
-## Generate Code
+## Generate code
 
 ```sh
 ohm generate handler Posts
@@ -71,10 +71,9 @@ ohm generate migration create_posts
 ohm generate resource Posts title:string body:text
 ```
 
-Generated code is meant to be owned by the app. It should be boring enough to
-read, test, and change.
+The app owns generated code. Keep it readable, testable, and changeable.
 
-## Operate the App
+## Operate the app
 
 Each generated app has its own binary. The framework CLI is not required at
 runtime.

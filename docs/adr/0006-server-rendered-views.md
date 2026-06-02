@@ -1,4 +1,4 @@
-# ADR 0006: Server-Rendered Views
+# ADR 0006: Server-rendered views
 
 ## Status
 
@@ -6,9 +6,9 @@ Accepted
 
 ## Context
 
-Ohm should make server-rendered Go web applications pleasant to build. The view
-system should provide structure for layouts, pages, components, forms, errors,
-and assets without requiring a separate frontend application.
+Ohm should support server-rendered Go web applications with structure for
+layouts, pages, components, forms, errors, and assets without requiring a
+separate frontend application.
 
 The framework should also preserve the explicitness and compile-time feedback
 that make Go attractive.
@@ -57,7 +57,7 @@ Ohm should avoid building a large custom template language. If templ proves to
 be the wrong default during implementation, the framework should revisit this
 decision before adding compatibility layers.
 
-## Open Questions
+## Open questions
 
 - Should `html/template` be supported as a secondary option?
 - How much form-builder behavior belongs in Ohm versus application code?

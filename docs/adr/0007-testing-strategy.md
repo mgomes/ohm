@@ -1,4 +1,4 @@
-# ADR 0007: Testing Strategy
+# ADR 0007: Testing strategy
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Ohm should make generated applications easy to test from the first day. The
+Ohm should make generated applications testable from the first day. The
 framework itself also needs strong tests because generators, scrubbing,
 configuration loading, migrations, and rendering all create long-term
 maintenance risk if they drift.
@@ -63,7 +63,7 @@ Database tests may require more setup than pure unit tests, but this is the
 right tradeoff for a framework that makes database-backed web applications its
 main path.
 
-## Open Questions
+## Open questions
 
 - Should generated apps include a default Postgres test container workflow?
 - Should Ohm provide fixture helpers, factory helpers, both, or neither?

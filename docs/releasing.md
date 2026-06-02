@@ -1,11 +1,11 @@
-# Releasing Ohm
+# Release Ohm
 
-Ohm releases are driven by Git tags.
+Git tags drive Ohm releases.
 
 Push a `vX.Y.Z` tag. GitHub Actions runs GoReleaser. GoReleaser builds the
 `ohm` CLI, creates archives, uploads checksums, and publishes a GitHub release.
 
-## Release Rule
+## Version tag rule
 
 Use semantic version tags with a leading `v`:
 
@@ -21,9 +21,9 @@ The release workflow only runs for tags that match:
 v*.*.*
 ```
 
-## Before a Tag
+## Check before tagging
 
-Run the normal checks:
+Run the repo checks:
 
 ```sh
 just check
@@ -87,7 +87,7 @@ Each archive includes:
 - `README.md`.
 - The files under `docs/`.
 
-## Version Output
+## Version output
 
 Released binaries print the tag:
 

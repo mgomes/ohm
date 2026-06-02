@@ -1,4 +1,4 @@
-# ADR 0008: Defer Background Jobs
+# ADR 0008: Defer background jobs
 
 ## Status
 

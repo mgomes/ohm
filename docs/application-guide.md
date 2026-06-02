@@ -1,4 +1,4 @@
-# Application Guide
+# Application guide
 
 Ohm apps are plain Go apps with a few strong conventions.
 
@@ -17,7 +17,7 @@ static/             static assets
 tmp/replays/        local replay snapshots
 ```
 
-The ownership rules are simple:
+The ownership rules are:
 
 ```text
 handlers own HTTP
@@ -107,7 +107,7 @@ process environment
 Process environment wins over file values. Boot should fail early when a
 required value is missing or malformed.
 
-Use `config.Secret` for values that should not print their raw value in logs or
+Use `config.Secret` for values that must not print their raw value in logs or
 errors.
 
 ## Database
@@ -138,7 +138,7 @@ just sqlc
 Ohm standardizes on `slog`.
 
 Generated apps wrap the JSON slog handler with Ohm's scrubber. The scrubber is
-case-insensitive and catches common secret names such as password, token,
+case-insensitive and matches common secret names such as password, token,
 authorization, cookie, session, and API key.
 
 Do not log full request bodies, cookies, or headers unless the app has a clear
@@ -164,7 +164,7 @@ Tests that require a database make that requirement explicit.
 
 ## Replay
 
-Replay turns a request snapshot into a local run through the app handler stack.
+Replay runs a request snapshot through the app handler stack.
 
 Use it to debug a concrete request:
 
@@ -185,7 +185,7 @@ ohm generate test-from-replay ./tmp/replays/login.json
 ```
 
 Replay snapshots are local debugging artifacts. Review them before committing.
-They should be scrubbed, but they can still contain request and response detail.
+Ohm scrubs them, but they can still contain request and response detail.
 
 Do not generate a replay test while the snapshot records uncontrolled
 boundaries such as clock, randomness, external HTTP, email, file writes,
