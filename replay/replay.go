@@ -34,22 +34,23 @@ var defaultResponseHeaders = []string{
 
 // Snapshot captures enough request data to replay a handler request.
 type Snapshot struct {
-	Version            int                 `json:"version"`
-	Method             string              `json:"method"`
-	Path               string              `json:"path"`
-	Query              map[string][]string `json:"query,omitempty"`
-	Headers            map[string][]string `json:"headers,omitempty"`
-	RequestID          string              `json:"request_id,omitempty"`
-	RoutePattern       string              `json:"route_pattern,omitempty"`
-	RouteParams        map[string]string   `json:"route_params,omitempty"`
-	ApplicationVersion string              `json:"application_version,omitempty"`
-	Environment        string              `json:"environment,omitempty"`
-	FeatureFlags       map[string]string   `json:"feature_flags,omitempty"`
-	Principal          *PrincipalRef       `json:"principal,omitempty"`
-	CapturedAt         time.Time           `json:"captured_at"`
-	Body               []byte              `json:"body,omitempty"`
-	BodyOmitted        bool                `json:"body_omitted"`
-	ExpectedResponse   *ExpectedResponse   `json:"expected_response,omitempty"`
+	Version                int                 `json:"version"`
+	Method                 string              `json:"method"`
+	Path                   string              `json:"path"`
+	Query                  map[string][]string `json:"query,omitempty"`
+	Headers                map[string][]string `json:"headers,omitempty"`
+	RequestID              string              `json:"request_id,omitempty"`
+	RoutePattern           string              `json:"route_pattern,omitempty"`
+	RouteParams            map[string]string   `json:"route_params,omitempty"`
+	ApplicationVersion     string              `json:"application_version,omitempty"`
+	Environment            string              `json:"environment,omitempty"`
+	FeatureFlags           map[string]string   `json:"feature_flags,omitempty"`
+	UncontrolledBoundaries []Boundary          `json:"uncontrolled_boundaries,omitempty"`
+	Principal              *PrincipalRef       `json:"principal,omitempty"`
+	CapturedAt             time.Time           `json:"captured_at"`
+	Body                   []byte              `json:"body,omitempty"`
+	BodyOmitted            bool                `json:"body_omitted"`
+	ExpectedResponse       *ExpectedResponse   `json:"expected_response,omitempty"`
 }
 
 // PrincipalRef identifies an authenticated principal without storing auth secrets.
@@ -57,6 +58,19 @@ type PrincipalRef struct {
 	Kind string `json:"kind,omitempty"`
 	ID   string `json:"id"`
 }
+
+// Boundary identifies an application dependency that can make replay nondeterministic.
+type Boundary string
+
+const (
+	BoundaryClock         Boundary = "clock"
+	BoundaryRandomID      Boundary = "random_id"
+	BoundaryExternalHTTP  Boundary = "external_http"
+	BoundaryEmailDelivery Boundary = "email_delivery"
+	BoundaryFileWrites    Boundary = "file_writes"
+	BoundaryDatabaseState Boundary = "database_state"
+	BoundaryFeatureFlags  Boundary = "feature_flags"
+)
 
 // ExpectedResponse captures the response assertions used by generated replay tests.
 type ExpectedResponse struct {
@@ -77,6 +91,7 @@ type captureOptions struct {
 	applicationVersion string
 	environment        string
 	featureFlags       map[string]string
+	uncontrolled       []Boundary
 	principal          *PrincipalRef
 }
 
@@ -135,6 +150,13 @@ func WithFeatureFlags(flags map[string]string) Option {
 	}
 }
 
+// WithUncontrolledBoundaries marks dependencies that may make replay nondeterministic.
+func WithUncontrolledBoundaries(boundaries ...Boundary) Option {
+	return func(opts *captureOptions) {
+		opts.uncontrolled = append(opts.uncontrolled, boundaries...)
+	}
+}
+
 // WithPrincipal includes an authenticated principal reference in captured snapshots.
 func WithPrincipal(ref PrincipalRef) Option {
 	return func(opts *captureOptions) {
@@ -166,20 +188,21 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 	}
 
 	snapshot := Snapshot{
-		Version:            snapshotVersion,
-		Method:             r.Method,
-		Path:               r.URL.Path,
-		Query:              query,
-		Headers:            headers,
-		RequestID:          requestID,
-		RoutePattern:       routePattern(r),
-		RouteParams:        routeParams(cfg.redactor, r),
-		ApplicationVersion: cfg.applicationVersion,
-		Environment:        cfg.environment,
-		FeatureFlags:       scrubFeatureFlags(cfg.redactor, cfg.featureFlags),
-		Principal:          scrubPrincipal(cfg.redactor, cfg.principal),
-		CapturedAt:         cfg.now().UTC(),
-		BodyOmitted:        true,
+		Version:                snapshotVersion,
+		Method:                 r.Method,
+		Path:                   r.URL.Path,
+		Query:                  query,
+		Headers:                headers,
+		RequestID:              requestID,
+		RoutePattern:           routePattern(r),
+		RouteParams:            routeParams(cfg.redactor, r),
+		ApplicationVersion:     cfg.applicationVersion,
+		Environment:            cfg.environment,
+		FeatureFlags:           scrubFeatureFlags(cfg.redactor, cfg.featureFlags),
+		UncontrolledBoundaries: NormalizeBoundaries(cfg.uncontrolled...),
+		Principal:              scrubPrincipal(cfg.redactor, cfg.principal),
+		CapturedAt:             cfg.now().UTC(),
+		BodyOmitted:            true,
 	}
 	if cfg.bodyLimit >= 0 {
 		body, omitted, err := captureBody(r, cfg.bodyLimit)
@@ -428,6 +451,25 @@ func scrubPrincipal(redactor *scrub.Redactor, ref *PrincipalRef) *PrincipalRef {
 		out.ID = fmt.Sprint(redactor.Any(out.Kind, out.ID))
 	}
 	return &out
+}
+
+// NormalizeBoundaries trims empty boundary names and preserves first-seen order.
+func NormalizeBoundaries(boundaries ...Boundary) []Boundary {
+	if len(boundaries) == 0 {
+		return nil
+	}
+
+	seen := make(map[Boundary]bool, len(boundaries))
+	out := make([]Boundary, 0, len(boundaries))
+	for _, boundary := range boundaries {
+		boundary = Boundary(strings.TrimSpace(string(boundary)))
+		if boundary == "" || seen[boundary] {
+			continue
+		}
+		seen[boundary] = true
+		out = append(out, boundary)
+	}
+	return out
 }
 
 func clonePrincipal(ref PrincipalRef) *PrincipalRef {

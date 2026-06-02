@@ -101,6 +101,44 @@ func TestGenerateReplayTestRequiresExpectedResponse(t *testing.T) {
 	}
 }
 
+func TestGenerateReplayTestRejectsUncontrolledBoundaries(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "journal")
+	if err := GenerateApp(App{
+		Destination: destination,
+		Module:      "example.com/journal",
+		Database:    DatabaseSQLite,
+		OhmVersion:  "v0.0.0",
+	}); err != nil {
+		t.Fatalf("GenerateApp(journal) error = %v, want nil", err)
+	}
+
+	snapshotPath := filepath.Join(destination, "tmp", "replays", "login.json")
+	writeReplaySnapshot(t, snapshotPath, replay.Snapshot{
+		Version: 1,
+		Method:  http.MethodGet,
+		Path:    "/",
+		UncontrolledBoundaries: []replay.Boundary{
+			replay.BoundaryClock,
+			replay.BoundaryDatabaseState,
+		},
+		ExpectedResponse: &replay.ExpectedResponse{
+			Status: http.StatusOK,
+		},
+	})
+
+	t.Chdir(destination)
+	_, err := GenerateReplayTest(ReplayTest{SnapshotPath: snapshotPath})
+	if err == nil {
+		t.Fatalf("GenerateReplayTest(snapshot with uncontrolled boundaries) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "records uncontrolled boundaries (clock, database_state)") {
+		t.Errorf("GenerateReplayTest(snapshot with uncontrolled boundaries) error = %v, want boundary context", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(destination, "internal", "replaytests", "login_replay_test.go")); !os.IsNotExist(statErr) {
+		t.Errorf("GenerateReplayTest(snapshot with uncontrolled boundaries) file stat error = %v, want not exist", statErr)
+	}
+}
+
 func TestGenerateReplayTestDoesNotOverwriteExistingFile(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "journal")
 	if err := GenerateApp(App{

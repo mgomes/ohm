@@ -94,6 +94,42 @@ func TestCommandWritesExpectedResponse(t *testing.T) {
 	}
 }
 
+func TestCommandWarnsAboutUncontrolledBoundaries(t *testing.T) {
+	app := ohm.New()
+	app.Get("/posts/{id}", func(req *ohm.Request) error {
+		req.PlainText(http.StatusOK, "post "+req.Param("id"))
+		return nil
+	})
+
+	path := writeSnapshot(t, Snapshot{
+		Version: snapshotVersion,
+		Method:  http.MethodGet,
+		Path:    "/posts/42",
+		UncontrolledBoundaries: []Boundary{
+			BoundaryClock,
+			BoundaryDatabaseState,
+			BoundaryClock,
+		},
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command := Command(app)
+	err := command.Run(context.Background(), cli.IO{Stdout: &stdout, Stderr: &stderr}, []string{path})
+	if err != nil {
+		t.Fatalf("Command(app).Run(ctx, io, %v) error = %v, want nil", []string{path}, err)
+	}
+
+	if stdout.String() != "Status: 200 OK\n\npost 42" {
+		t.Errorf("Command(app).Run(ctx, io, %v) stdout = %q, want replay output", []string{path}, stdout.String())
+	}
+	wantStderr := "Warning: replay snapshot records uncontrolled clock boundary; results may not be deterministic.\n" +
+		"Warning: replay snapshot records uncontrolled database_state boundary; results may not be deterministic.\n"
+	if stderr.String() != wantStderr {
+		t.Errorf("Command(app).Run(ctx, io, %v) stderr = %q, want determinism warning", []string{path}, stderr.String())
+	}
+}
+
 func TestCommandPropagatesContextToReplayRequest(t *testing.T) {
 	app := ohm.New()
 	app.Get("/context", func(req *ohm.Request) error {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,25 @@ func TestCaptureIncludesOptionalMetadata(t *testing.T) {
 	}
 	if got.FeatureFlags["api_token"] != "[REDACTED]" {
 		t.Errorf("Capture(request, WithFeatureFlags(flags)) api_token = %q, want [REDACTED]", got.FeatureFlags["api_token"])
+	}
+}
+
+func TestCaptureIncludesNormalizedUncontrolledBoundaries(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+
+	got, err := Capture(request, WithUncontrolledBoundaries(
+		BoundaryClock,
+		BoundaryDatabaseState,
+		Boundary(" "),
+		BoundaryClock,
+	))
+	if err != nil {
+		t.Fatalf("Capture(request, uncontrolled boundaries) error = %v, want nil", err)
+	}
+
+	want := []Boundary{BoundaryClock, BoundaryDatabaseState}
+	if !slices.Equal(got.UncontrolledBoundaries, want) {
+		t.Errorf("Capture(request, uncontrolled boundaries) UncontrolledBoundaries = %v, want %v", got.UncontrolledBoundaries, want)
 	}
 }
 
