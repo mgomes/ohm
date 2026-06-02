@@ -125,6 +125,44 @@ func TestCaptureIncludesOptionalMetadata(t *testing.T) {
 	}
 }
 
+func TestCaptureIncludesPrincipalReference(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/account", nil)
+
+	got, err := Capture(request, WithPrincipal(PrincipalRef{Kind: "user", ID: "user_123"}))
+	if err != nil {
+		t.Fatalf("Capture(request, WithPrincipal(user)) error = %v, want nil", err)
+	}
+
+	if got.Principal == nil {
+		t.Fatalf("Capture(request, WithPrincipal(user)) Principal = nil, want reference")
+	}
+	if got.Principal.Kind != "user" {
+		t.Errorf("Capture(request, WithPrincipal(user)) Principal.Kind = %q, want %q", got.Principal.Kind, "user")
+	}
+	if got.Principal.ID != "user_123" {
+		t.Errorf("Capture(request, WithPrincipal(user)) Principal.ID = %q, want %q", got.Principal.ID, "user_123")
+	}
+}
+
+func TestCaptureRedactsSensitivePrincipalKinds(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/account", nil)
+
+	got, err := Capture(request, WithPrincipal(PrincipalRef{Kind: "token", ID: "secret"}))
+	if err != nil {
+		t.Fatalf("Capture(request, WithPrincipal(token)) error = %v, want nil", err)
+	}
+
+	if got.Principal == nil {
+		t.Fatalf("Capture(request, WithPrincipal(token)) Principal = nil, want reference")
+	}
+	if got.Principal.Kind != "token" {
+		t.Errorf("Capture(request, WithPrincipal(token)) Principal.Kind = %q, want %q", got.Principal.Kind, "token")
+	}
+	if got.Principal.ID != "[REDACTED]" {
+		t.Errorf("Capture(request, WithPrincipal(token)) Principal.ID = %q, want [REDACTED]", got.Principal.ID)
+	}
+}
+
 func TestCaptureCapturesBodyWithinLimitAndRestoresRequestBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("title=hello"))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")

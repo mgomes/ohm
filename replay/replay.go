@@ -45,10 +45,17 @@ type Snapshot struct {
 	ApplicationVersion string              `json:"application_version,omitempty"`
 	Environment        string              `json:"environment,omitempty"`
 	FeatureFlags       map[string]string   `json:"feature_flags,omitempty"`
+	Principal          *PrincipalRef       `json:"principal,omitempty"`
 	CapturedAt         time.Time           `json:"captured_at"`
 	Body               []byte              `json:"body,omitempty"`
 	BodyOmitted        bool                `json:"body_omitted"`
 	ExpectedResponse   *ExpectedResponse   `json:"expected_response,omitempty"`
+}
+
+// PrincipalRef identifies an authenticated principal without storing auth secrets.
+type PrincipalRef struct {
+	Kind string `json:"kind,omitempty"`
+	ID   string `json:"id"`
 }
 
 // ExpectedResponse captures the response assertions used by generated replay tests.
@@ -70,6 +77,7 @@ type captureOptions struct {
 	applicationVersion string
 	environment        string
 	featureFlags       map[string]string
+	principal          *PrincipalRef
 }
 
 // WithHeaders configures the request headers captured into a snapshot.
@@ -127,6 +135,13 @@ func WithFeatureFlags(flags map[string]string) Option {
 	}
 }
 
+// WithPrincipal includes an authenticated principal reference in captured snapshots.
+func WithPrincipal(ref PrincipalRef) Option {
+	return func(opts *captureOptions) {
+		opts.principal = clonePrincipal(ref)
+	}
+}
+
 // Capture creates a scrubbed request snapshot.
 func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 	if r == nil {
@@ -162,6 +177,7 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 		ApplicationVersion: cfg.applicationVersion,
 		Environment:        cfg.environment,
 		FeatureFlags:       scrubFeatureFlags(cfg.redactor, cfg.featureFlags),
+		Principal:          scrubPrincipal(cfg.redactor, cfg.principal),
 		CapturedAt:         cfg.now().UTC(),
 		BodyOmitted:        true,
 	}
@@ -401,6 +417,25 @@ func scrubFeatureFlags(redactor *scrub.Redactor, flags map[string]string) map[st
 		out[key] = value
 	}
 	return out
+}
+
+func scrubPrincipal(redactor *scrub.Redactor, ref *PrincipalRef) *PrincipalRef {
+	if ref == nil || ref.ID == "" {
+		return nil
+	}
+	out := *ref
+	if redactor.SensitiveKey(out.Kind) {
+		out.ID = fmt.Sprint(redactor.Any(out.Kind, out.ID))
+	}
+	return &out
+}
+
+func clonePrincipal(ref PrincipalRef) *PrincipalRef {
+	if ref.ID == "" {
+		return nil
+	}
+	out := ref
+	return &out
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
