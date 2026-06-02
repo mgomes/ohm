@@ -184,8 +184,9 @@ Generate a regression test:
 ohm generate test-from-replay ./tmp/replays/login.json
 ```
 
-Replay snapshots are local debugging artifacts. Review them before committing.
-They can contain request and response detail, including expected response data.
+Replay snapshots are local debugging artifacts. Before committing a snapshot,
+review it and scrub sensitive values. Snapshots can contain request and
+response detail, including expected response data.
 
 Do not generate a replay test while the snapshot records uncontrolled
 boundaries such as clock, randomness, external HTTP, email, file writes,
