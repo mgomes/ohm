@@ -47,8 +47,8 @@ func TestGenerateResourceWritesMigrationQueriesAndHandler(t *testing.T) {
 	if !slices.Equal(result.CreatedFiles, wantCreated) {
 		t.Errorf("GenerateResource(Posts) created files = %v, want %v", result.CreatedFiles, wantCreated)
 	}
-	if result.RegisterFile != filepath.Join(handlersDir, "home.go") {
-		t.Errorf("GenerateResource(Posts) register file = %q, want %q", result.RegisterFile, filepath.Join(handlersDir, "home.go"))
+	if result.RegisterFile != filepath.Join(handlersDir, "routes.go") {
+		t.Errorf("GenerateResource(Posts) register file = %q, want %q", result.RegisterFile, filepath.Join(handlersDir, "routes.go"))
 	}
 	if !result.RegisterUpdated {
 		t.Errorf("GenerateResource(Posts) register updated = false, want true")
@@ -85,9 +85,9 @@ func TestGenerateResourceWritesMigrationQueriesAndHandler(t *testing.T) {
 		}
 	}
 
-	home := readFile(t, filepath.Join(handlersDir, "home.go"))
-	if !strings.Contains(home, `application.Get("/posts", PostsIndex)`) {
-		t.Errorf("GenerateResource(Posts) home.go = %q, want posts route registration", home)
+	routes := readFile(t, filepath.Join(handlersDir, "routes.go"))
+	if !strings.Contains(routes, `application.Get("/posts", PostsIndex)`) {
+		t.Errorf("GenerateResource(Posts) routes.go = %q, want posts route registration", routes)
 	}
 
 	root := repoRoot(t)
@@ -178,9 +178,9 @@ func TestGenerateResourceDoesNotWritePartialFilesWhenQueryExists(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(handlersDir, "posts.go")); !os.IsNotExist(statErr) {
 		t.Errorf("GenerateResource(existing query) posts.go stat error = %v, want not exist", statErr)
 	}
-	home := readFile(t, filepath.Join(handlersDir, "home.go"))
-	if strings.Contains(home, `application.Get("/posts", PostsIndex)`) {
-		t.Errorf("GenerateResource(existing query) home.go = %q, want no posts route registration", home)
+	routes := readFile(t, filepath.Join(handlersDir, "routes.go"))
+	if strings.Contains(routes, `application.Get("/posts", PostsIndex)`) {
+		t.Errorf("GenerateResource(existing query) routes.go = %q, want no posts route registration", routes)
 	}
 	migrations, err := filepath.Glob(filepath.Join(destination, "migrations", "*_create_posts.sql"))
 	if err != nil {

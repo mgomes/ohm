@@ -102,17 +102,18 @@ func TestGenerateHandlerCommandCreatesHandlerWithFlagsAfterName(t *testing.T) {
 	if _, err := os.Stat(postsPath); err != nil {
 		t.Fatalf("Program.Run(%v) generated %s stat error = %v, want nil", args, postsPath, err)
 	}
-	home, err := os.ReadFile(filepath.Join("internal", "handlers", "home.go"))
+	routesPath := filepath.Join("internal", "handlers", "routes.go")
+	routes, err := os.ReadFile(routesPath)
 	if err != nil {
-		t.Fatalf("os.ReadFile(generated home.go) error = %v, want nil", err)
+		t.Fatalf("os.ReadFile(generated routes.go) error = %v, want nil", err)
 	}
-	if !strings.Contains(string(home), `application.Get("/posts", PostsIndex)`) {
-		t.Errorf("Program.Run(%v) generated home.go = %q, want posts route registration", args, home)
+	if !strings.Contains(string(routes), `application.Get("/posts", PostsIndex)`) {
+		t.Errorf("Program.Run(%v) generated routes.go = %q, want posts route registration", args, routes)
 	}
 	if !strings.Contains(stdout.String(), "Created "+postsPath) {
 		t.Errorf("Program.Run(%v) stdout = %q, want generated handler path", args, stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Updated "+filepath.Join("internal", "handlers", "home.go")) {
+	if !strings.Contains(stdout.String(), "Updated "+routesPath) {
 		t.Errorf("Program.Run(%v) stdout = %q, want updated register path", args, stdout.String())
 	}
 }
@@ -158,7 +159,7 @@ func TestGenerateResourceCommandCreatesResourceFiles(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Created "+queryPath) {
 		t.Errorf("Program.Run(%v) stdout = %q, want generated query path", args, stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Updated "+filepath.Join("internal", "handlers", "home.go")) {
+	if !strings.Contains(stdout.String(), "Updated "+filepath.Join("internal", "handlers", "routes.go")) {
 		t.Errorf("Program.Run(%v) stdout = %q, want updated register path", args, stdout.String())
 	}
 }
