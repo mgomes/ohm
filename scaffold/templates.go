@@ -1,6 +1,13 @@
 package scaffold
 
 var appTemplates = map[string]string{
+	".gitignore": `/development.db
+/test.db
+/tmp/*
+!/tmp/replays/
+/tmp/replays/*
+!/tmp/replays/README.md
+`,
 	".env.example": `# Shared values loaded for every OHM_ENV.
 # Put environment-specific database settings in .env.development or .env.test.
 `,
@@ -1493,6 +1500,13 @@ sql:
 	"static/README.md": `# Static Assets
 
 Place application static assets here.
+`,
+	"tmp/replays/README.md": `# Replay Snapshots
+
+Store local replay snapshot JSON files here while debugging requests.
+
+Replay snapshots are local debugging artifacts. Review them before committing
+because they may include scrubbed request and response details.
 `,
 	"static/app.css": `body {
 	margin: 2rem;
