@@ -213,6 +213,33 @@ func TestGenerateMigrationCommandRejectsUnknownGenerator(t *testing.T) {
 	}
 }
 
+func TestVersionCommandPrintsConfiguredVersion(t *testing.T) {
+	var stdout bytes.Buffer
+	program := New(
+		WithIO(cli.IO{Stdout: &stdout}),
+		WithVersion("v1.2.3"),
+	)
+
+	args := []string{"version"}
+	err := program.Run(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Program.Run(%v) error = %v, want nil", args, err)
+	}
+	if stdout.String() != "v1.2.3\n" {
+		t.Errorf("Program.Run(%v) stdout = %q, want configured version", args, stdout.String())
+	}
+}
+
+func TestVersionCommandRejectsArguments(t *testing.T) {
+	program := New(WithVersion("v1.2.3"))
+
+	args := []string{"version", "extra"}
+	err := program.Run(context.Background(), args)
+	if !errors.Is(err, cli.ErrUsage) {
+		t.Fatalf("Program.Run(%v) error = %v, want ErrUsage", args, err)
+	}
+}
+
 func TestNewCommandCreatesPostgresApplicationByDefault(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "ledger")
 	var stdout bytes.Buffer
