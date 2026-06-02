@@ -994,6 +994,11 @@ var _ = templruntime.GeneratedTemplate
 
 Place reusable templ components here.
 `,
+	"internal/services/README.md": `# Services
+
+Put business workflows here. Services should own multi-step application work,
+including transaction boundaries that coordinate multiple queries.
+`,
 	"internal/views/components/flash.go": `package components
 
 type FlashLevel string
