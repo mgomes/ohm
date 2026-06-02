@@ -22,6 +22,7 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	}
 
 	wantFiles := []string{
+		".gitignore",
 		".env.development.example",
 		".env.example",
 		".env.test.example",
@@ -65,6 +66,7 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"sqlc.yaml",
 		"static/app.css",
 		"static/README.md",
+		"tmp/replays/README.md",
 		"justfile",
 	}
 	for _, file := range wantFiles {
@@ -82,6 +84,24 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	}
 	if !strings.Contains(goMod, "github.com/a-h/templ v0.3.1020") {
 		t.Errorf("GenerateApp(sqlite app) go.mod = %q, want templ dependency", goMod)
+	}
+
+	gitignore := readFile(t, filepath.Join(destination, ".gitignore"))
+	for _, want := range []string{
+		".env",
+		".env.*",
+		"!.env.example",
+		"!.env.*.example",
+		"/development.db",
+		"/test.db",
+		"/tmp/*",
+		"!/tmp/replays/",
+		"/tmp/replays/*",
+		"!/tmp/replays/README.md",
+	} {
+		if !strings.Contains(gitignore, want) {
+			t.Errorf("GenerateApp(sqlite app) .gitignore = %q, want %q", gitignore, want)
+		}
 	}
 
 	envExample := readFile(t, filepath.Join(destination, ".env.example"))
@@ -292,6 +312,11 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	}
 	if !strings.Contains(formHelper, `func NewField(name string, label string, values Values, errors Errors) Field`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/forms/forms.go = %q, want form field constructor", formHelper)
+	}
+
+	replayReadme := readFile(t, filepath.Join(destination, "tmp", "replays", "README.md"))
+	if !strings.Contains(replayReadme, "Replay Snapshots") {
+		t.Errorf("GenerateApp(sqlite app) tmp/replays/README.md = %q, want replay snapshot instructions", replayReadme)
 	}
 }
 
