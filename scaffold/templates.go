@@ -1,7 +1,11 @@
 package scaffold
 
 var appTemplates = map[string]string{
-	".gitignore": `/development.db
+	".gitignore": `.env
+.env.*
+!.env.example
+!.env.*.example
+/development.db
 /test.db
 /tmp/*
 !/tmp/replays/

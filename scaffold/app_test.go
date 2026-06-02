@@ -88,6 +88,10 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 
 	gitignore := readFile(t, filepath.Join(destination, ".gitignore"))
 	for _, want := range []string{
+		".env",
+		".env.*",
+		"!.env.example",
+		"!.env.*.example",
 		"/development.db",
 		"/test.db",
 		"/tmp/*",
