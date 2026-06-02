@@ -13,11 +13,14 @@ import (
 	"github.com/mgomes/ohm/scaffold"
 )
 
+var version = "dev"
+
 // Option configures the Ohm framework CLI.
 type Option func(*options)
 
 type options struct {
 	io         cli.IO
+	version    string
 	ohmVersion string
 }
 
@@ -35,9 +38,18 @@ func WithOhmVersion(version string) Option {
 	}
 }
 
+// WithVersion configures the version printed by the framework CLI.
+func WithVersion(version string) Option {
+	return func(opts *options) {
+		opts.version = version
+	}
+}
+
 // New returns the Ohm framework CLI program.
 func New(opts ...Option) *cli.Program {
-	cfg := options{}
+	cfg := options{
+		version: version,
+	}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -45,7 +57,27 @@ func New(opts ...Option) *cli.Program {
 	return cli.New("ohm", []cli.Command{
 		generateCommand(),
 		newCommand(cfg.ohmVersion),
+		versionCommand(cfg.version),
 	}, cli.WithIO(cfg.io))
+}
+
+func versionCommand(version string) cli.Command {
+	return cli.Command{
+		Name:    "version",
+		Summary: "print the Ohm CLI version",
+		Usage:   "version",
+		Run: func(_ context.Context, commandIO cli.IO, args []string) error {
+			commandIO = withIODefaults(commandIO)
+			if len(args) > 0 {
+				if isHelpArg(args[0]) {
+					return cli.ErrHelp
+				}
+				return fmt.Errorf("%w: version does not accept arguments", cli.ErrUsage)
+			}
+			fmt.Fprintln(commandIO.Stdout, version)
+			return nil
+		},
+	}
 }
 
 func generateCommand() cli.Command {
