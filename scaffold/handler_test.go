@@ -32,8 +32,8 @@ func TestGenerateHandlerWritesFilesAndRegistersRoute(t *testing.T) {
 	if !slices.Equal(result.CreatedFiles, wantCreated) {
 		t.Errorf("GenerateHandler(Posts) created files = %v, want %v", result.CreatedFiles, wantCreated)
 	}
-	if result.RegisterFile != filepath.Join(handlersDir, "home.go") {
-		t.Errorf("GenerateHandler(Posts) register file = %q, want %q", result.RegisterFile, filepath.Join(handlersDir, "home.go"))
+	if result.RegisterFile != filepath.Join(handlersDir, "routes.go") {
+		t.Errorf("GenerateHandler(Posts) register file = %q, want %q", result.RegisterFile, filepath.Join(handlersDir, "routes.go"))
 	}
 	if !result.RegisterUpdated {
 		t.Errorf("GenerateHandler(Posts) register updated = false, want true")
@@ -42,9 +42,9 @@ func TestGenerateHandlerWritesFilesAndRegistersRoute(t *testing.T) {
 		t.Errorf("GenerateHandler(Posts) route path = %q, want %q", result.RoutePath, "/posts")
 	}
 
-	home := readFile(t, filepath.Join(handlersDir, "home.go"))
-	if !strings.Contains(home, `application.Get("/posts", PostsIndex)`) {
-		t.Errorf("GenerateHandler(Posts) home.go = %q, want posts route registration", home)
+	routes := readFile(t, filepath.Join(handlersDir, "routes.go"))
+	if !strings.Contains(routes, `application.Get("/posts", PostsIndex)`) {
+		t.Errorf("GenerateHandler(Posts) routes.go = %q, want posts route registration", routes)
 	}
 
 	posts := readFile(t, filepath.Join(handlersDir, "posts.go"))
@@ -118,9 +118,9 @@ func TestGenerateHandlerDoesNotOverwriteExistingFile(t *testing.T) {
 	if got := readFile(t, existingPath); got != "keep\n" {
 		t.Errorf("GenerateHandler(existing Posts) posts.go = %q, want %q", got, "keep\n")
 	}
-	home := readFile(t, filepath.Join(handlersDir, "home.go"))
-	if strings.Contains(home, `application.Get("/posts", PostsIndex)`) {
-		t.Errorf("GenerateHandler(existing Posts) home.go = %q, want no posts route registration", home)
+	routes := readFile(t, filepath.Join(handlersDir, "routes.go"))
+	if strings.Contains(routes, `application.Get("/posts", PostsIndex)`) {
+		t.Errorf("GenerateHandler(existing Posts) routes.go = %q, want no posts route registration", routes)
 	}
 	if _, statErr := os.Stat(filepath.Join(handlersDir, "posts_test.go")); !os.IsNotExist(statErr) {
 		t.Errorf("GenerateHandler(existing Posts) posts_test.go stat error = %v, want not exist", statErr)

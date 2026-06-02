@@ -67,6 +67,8 @@ Keep handlers focused on HTTP:
 - Render a response.
 - Return errors to the framework boundary.
 
+Register routes in `internal/handlers/routes.go`.
+
 Do not put long workflows in handlers. Put those in `internal/services`.
 
 ## Views

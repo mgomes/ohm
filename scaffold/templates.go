@@ -633,12 +633,16 @@ import (
 	"{{.Module}}/internal/views/pages"
 )
 
-func Register(application *ohm.App) {
-	application.Get("/", Home)
-}
-
 func Home(req *ohm.Request) error {
 	return req.HTML(http.StatusOK, pages.Home("{{.Title}}"))
+}
+`,
+	"internal/handlers/routes.go": `package handlers
+
+import "github.com/mgomes/ohm"
+
+func Register(application *ohm.App) {
+	application.Get("/", Home)
 }
 `,
 	"internal/handlers/home_test.go": `package handlers
