@@ -94,6 +94,3 @@ go run ./cmd/journal replay ./tmp/replays/request.json
 - [Application guide](docs/application-guide.md)
 - [Release guide](docs/releasing.md)
 - [Architecture decisions](docs/adr)
-
-The ADR folder is the current architecture record set. It contains ADRs 0001
-through 0009.
