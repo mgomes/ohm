@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -82,6 +84,94 @@ func TestDecodeReportsMissingAndInvalidValues(t *testing.T) {
 	if !maps.Equal(got, want) {
 		t.Errorf("Decode[appConfig](%v) problems = %v, want %v", values, got, want)
 	}
+}
+
+type fuzzScalarConfig struct {
+	Name        string `env:"APP_NAME,required"`
+	Debug       bool
+	Port        int16
+	Count       uint8
+	Ratio       float32
+	Timeout     time.Duration `env:"REQUEST_TIMEOUT"`
+	DatabaseURL Secret        `env:"DATABASE_URL,required"`
+}
+
+func FuzzDecodeScalars(f *testing.F) {
+	seeds := []struct {
+		name     string
+		debug    string
+		port     string
+		count    string
+		ratio    string
+		timeout  string
+		database string
+	}{
+		{name: "ohm", debug: "true", port: "3000", count: "2", ratio: "1.5", timeout: "5s", database: "postgres://localhost/ohm"},
+		{name: "", debug: "false", port: "-1", count: "0", ratio: "0", timeout: "0s", database: ""},
+		{name: "bad", debug: "not-bool", port: "abc", count: "-1", ratio: "nan", timeout: "soon", database: "db"},
+	}
+	for _, seed := range seeds {
+		f.Add(seed.name, seed.debug, seed.port, seed.count, seed.ratio, seed.timeout, seed.database)
+	}
+
+	f.Fuzz(func(t *testing.T, name string, debugRaw string, portRaw string, countRaw string, ratioRaw string, timeoutRaw string, databaseRaw string) {
+		values := map[string]string{
+			"APP_NAME":        name,
+			"DEBUG":           debugRaw,
+			"PORT":            portRaw,
+			"COUNT":           countRaw,
+			"RATIO":           ratioRaw,
+			"REQUEST_TIMEOUT": timeoutRaw,
+			"DATABASE_URL":    databaseRaw,
+		}
+
+		got, err := Decode[fuzzScalarConfig](FromMap(values))
+		if err != nil {
+			return
+		}
+
+		if got.Name != name {
+			t.Errorf("Decode[fuzzScalarConfig](%v) Name = %q, want %q", values, got.Name, name)
+		}
+		debug, err := strconv.ParseBool(debugRaw)
+		if err != nil {
+			t.Fatalf("Decode[fuzzScalarConfig](%v) error = nil, but strconv.ParseBool(%q) error = %v", values, debugRaw, err)
+		}
+		if got.Debug != debug {
+			t.Errorf("Decode[fuzzScalarConfig](%v) Debug = %t, want %t", values, got.Debug, debug)
+		}
+		port, err := strconv.ParseInt(portRaw, 10, 16)
+		if err != nil {
+			t.Fatalf("Decode[fuzzScalarConfig](%v) error = nil, but strconv.ParseInt(%q, 10, 16) error = %v", values, portRaw, err)
+		}
+		if got.Port != int16(port) {
+			t.Errorf("Decode[fuzzScalarConfig](%v) Port = %d, want %d", values, got.Port, int16(port))
+		}
+		count, err := strconv.ParseUint(countRaw, 10, 8)
+		if err != nil {
+			t.Fatalf("Decode[fuzzScalarConfig](%v) error = nil, but strconv.ParseUint(%q, 10, 8) error = %v", values, countRaw, err)
+		}
+		if got.Count != uint8(count) {
+			t.Errorf("Decode[fuzzScalarConfig](%v) Count = %d, want %d", values, got.Count, uint8(count))
+		}
+		ratio, err := strconv.ParseFloat(ratioRaw, 32)
+		if err != nil {
+			t.Fatalf("Decode[fuzzScalarConfig](%v) error = nil, but strconv.ParseFloat(%q, 32) error = %v", values, ratioRaw, err)
+		}
+		if gotRatio := float64(got.Ratio); gotRatio != float64(float32(ratio)) && !(math.IsNaN(gotRatio) && math.IsNaN(ratio)) {
+			t.Errorf("Decode[fuzzScalarConfig](%v) Ratio = %v, want %v", values, got.Ratio, float32(ratio))
+		}
+		timeout, err := time.ParseDuration(timeoutRaw)
+		if err != nil {
+			t.Fatalf("Decode[fuzzScalarConfig](%v) error = nil, but time.ParseDuration(%q) error = %v", values, timeoutRaw, err)
+		}
+		if got.Timeout != timeout {
+			t.Errorf("Decode[fuzzScalarConfig](%v) Timeout = %s, want %s", values, got.Timeout, timeout)
+		}
+		if got.DatabaseURL.Reveal() != databaseRaw {
+			t.Errorf("Decode[fuzzScalarConfig](%v) DatabaseURL = %q, want %q", values, got.DatabaseURL.Reveal(), databaseRaw)
+		}
+	})
 }
 
 func TestLoadUsesProcessLookupBeforeEnvFiles(t *testing.T) {

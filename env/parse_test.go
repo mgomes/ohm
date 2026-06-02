@@ -42,6 +42,41 @@ NO_EXPANSION=$DATABASE_URL
 	}
 }
 
+func FuzzParse(f *testing.F) {
+	for _, input := range []string{
+		"",
+		"# comment\n",
+		"DATABASE_URL=postgres://localhost/ohm\n",
+		"EMPTY=\nSPACED = value with spaces\n",
+		"DOUBLE=\"first\\nsecond\"\n",
+		"SINGLE='single quoted'\n",
+		"COMMENTED=value # trailing comment\n",
+		"KEY=\"unterminated\n",
+		"not valid\n",
+	} {
+		f.Add(input)
+	}
+
+	f.Fuzz(func(t *testing.T, input string) {
+		first, firstErr := Parse(strings.NewReader(input))
+		second, secondErr := Parse(strings.NewReader(input))
+		if got, want := firstErr == nil, secondErr == nil; got != want {
+			t.Fatalf("Parse(%q) first error = %v, second error = %v, want same error presence", input, firstErr, secondErr)
+		}
+		if firstErr != nil {
+			return
+		}
+		if !maps.Equal(first, second) {
+			t.Errorf("Parse(%q) first result = %v, second result = %v, want deterministic result", input, first, second)
+		}
+		for key := range first {
+			if !validKey(key) {
+				t.Errorf("Parse(%q) returned invalid key %q", input, key)
+			}
+		}
+	})
+}
+
 func TestParseReportsLineNumber(t *testing.T) {
 	input := "VALID=true\nnot valid\n"
 
