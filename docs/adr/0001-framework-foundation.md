@@ -1,4 +1,4 @@
-# ADR 0001: Framework Foundation
+# ADR 0001: Framework foundation
 
 ## Status
 
@@ -44,10 +44,10 @@ Ohm will use these defaults:
 
 Ohm should eventually hide `chi` and most direct `net/http` usage behind
 framework-level routing, handler, middleware, rendering, and error APIs. This
-does not mean replacing Go's HTTP model with magic. It means application code
-should usually speak Ohm while advanced users retain escape hatches to ordinary
-`http.Handler`, `http.Request`, `http.ResponseWriter`, and chi internals where
-needed.
+does not mean replacing Go's HTTP model with implicit behavior. It means
+application code should usually speak Ohm while advanced users retain escape
+hatches to ordinary `http.Handler`, `http.Request`, `http.ResponseWriter`, and
+chi internals where needed.
 
 Ohm will use `handlers` as the HTTP boundary name instead of `controllers`.
 The initial application architecture is:
@@ -99,15 +99,15 @@ Skipping jobs initially keeps the first framework surface smaller. Job support
 can be added later with clearer requirements around retries, idempotency,
 shutdown, observability, and scheduling.
 
-## Initial Non-Goals
+## Initial non-goals
 
 - Build a framework-specific ORM.
-- Obscure Go's HTTP model with magical runtime behavior.
+- Obscure Go's HTTP model with implicit runtime behavior.
 - Include background jobs in the first version.
 - Preserve backwards compatibility before the framework has a stable public API.
 - Add local hacks or adapters that paper over missing framework design.
 
-## Follow-Up ADRs
+## Follow-up ADRs
 
 - CLI command structure and generator behavior.
 - Configuration loading and environment validation.

@@ -1,4 +1,4 @@
-# Ohm Documentation
+# Ohm documentation
 
 Start here:
 
@@ -7,5 +7,5 @@ Start here:
 - [Release guide](releasing.md)
 - [Architecture decisions](adr)
 
-The ADRs describe why Ohm is shaped this way. The guides describe how to use
-the current implementation.
+The ADRs describe why Ohm has this shape. The guides describe how to use this
+implementation.

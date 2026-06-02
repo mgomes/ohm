@@ -1,4 +1,4 @@
-# ADR 0004: Structured Logging and Scrubbing
+# ADR 0004: Structured logging and scrubbing
 
 ## Status
 
@@ -77,7 +77,7 @@ renderers still need to avoid capturing unnecessary data in the first place.
 The scrubber must be heavily tested because it becomes part of Ohm's security
 boundary.
 
-## Open Questions
+## Open questions
 
 - What redaction string should Ohm use?
 - Should Ohm support value-pattern scrubbing, or only key-based and explicit

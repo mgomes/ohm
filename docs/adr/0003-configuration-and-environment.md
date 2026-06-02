@@ -1,4 +1,4 @@
-# ADR 0003: Configuration and Environment Loading
+# ADR 0003: Configuration and environment loading
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Ohm applications need a simple configuration story that works locally,
+Ohm applications need a clear configuration path that works locally,
 under test, and in production. The framework should provide good defaults while
 remaining explicit about where configuration comes from.
 
@@ -63,7 +63,7 @@ Avoiding shell expansion makes the parser smaller, safer, and easier to test.
 If expansion becomes necessary later, it should be added deliberately with an
 ADR and a precise compatibility contract.
 
-## Open Questions
+## Open questions
 
 - Should Ohm reserve additional environment names beyond `development`, `test`,
   and `production`?

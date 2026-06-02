@@ -1,7 +1,7 @@
-# Getting Started
+# Get started
 
-Ohm gives you a generated Go app that already knows how to boot, route,
-migrate, render, test, and replay requests.
+An Ohm app includes commands for booting, routing, migrating, rendering,
+testing, and replaying requests.
 
 ## Requirements
 
@@ -9,7 +9,7 @@ migrate, render, test, and replay requests.
 - `just` for the generated task runner.
 - Postgres if you choose the default database.
 
-SQLite is available for local tools, smaller apps, and fast experiments.
+Choose SQLite for local tools, smaller apps, and experiments.
 
 ## Install Ohm
 
@@ -32,9 +32,9 @@ ohm version
 ohm help
 ```
 
-## Create a SQLite App
+## Create a SQLite app
 
-Use SQLite when you want the fastest local start.
+Use SQLite for a local app that doesn't need Postgres.
 
 ```sh
 ohm new journal --db sqlite --module example.com/journal
@@ -47,7 +47,7 @@ just server
 
 Open `http://localhost:8080`.
 
-## Create a Postgres App
+## Create a Postgres app
 
 Postgres is the default.
 
@@ -69,7 +69,7 @@ just server
 Tests that need Postgres require `DATABASE_URL`. They skip instead of silently
 falling back to SQLite.
 
-## Generate a Resource
+## Generate a resource
 
 Create a resource with SQL, migration, handler, and route wiring:
 
@@ -79,7 +79,7 @@ just generate
 just check
 ```
 
-Smaller generators are available too:
+You can also generate one file group at a time:
 
 ```sh
 ohm generate handler Posts
@@ -89,7 +89,7 @@ ohm generate migration create_posts
 Generators only add files and route wiring. The generated code is normal app
 code.
 
-## Useful App Commands
+## Useful app commands
 
 Run commands through the generated app binary:
 
@@ -112,7 +112,7 @@ just db-seed
 just check
 ```
 
-## Replay a Request
+## Replay a request
 
 Replay snapshots live under `tmp/replays`.
 
@@ -122,6 +122,6 @@ go run ./cmd/journal replay --write-expected ./tmp/replays/login-failure.json
 ohm generate test-from-replay ./tmp/replays/login-failure.json
 ```
 
-Do not treat replay as magic. If a request depends on uncontrolled time,
-randomness, external services, or database state, make that boundary explicit
-before turning the replay into a regression test.
+Replay depends on deterministic boundaries. If a request depends on
+uncontrolled time, randomness, external services, or database state, make that
+boundary explicit before turning the replay into a regression test.

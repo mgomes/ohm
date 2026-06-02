@@ -1,4 +1,4 @@
-# ADR 0005: Database, Migrations, and Query Boundaries
+# ADR 0005: Database, migrations, and query boundaries
 
 ## Status
 
@@ -74,7 +74,7 @@ The framework will need clear abstractions around database drivers because
 Postgres and SQLite have different connection, migration, and sqlc
 configuration needs.
 
-## Open Questions
+## Open questions
 
 - Should test databases default to Postgres, SQLite, or follow the selected app
   database?
