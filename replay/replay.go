@@ -233,11 +233,13 @@ func NewRequest(snapshot Snapshot) (*http.Request, error) {
 	if snapshot.Path == "" {
 		return nil, fmt.Errorf("replay snapshot path is required")
 	}
+	if err := validatePath(snapshot.Path); err != nil {
+		return nil, err
+	}
 
-	target := snapshot.Path
-	query := url.Values(snapshot.Query).Encode()
-	if query != "" {
-		target += "?" + query
+	target := requestTarget(snapshot.Path, snapshot.Query)
+	if _, err := http.NewRequest(snapshot.Method, "http://example.com"+target, nil); err != nil {
+		return nil, fmt.Errorf("replay snapshot request is invalid: %w", err)
 	}
 
 	request := httptest.NewRequest(snapshot.Method, target, bytes.NewReader(snapshot.Body))
@@ -250,6 +252,21 @@ func NewRequest(snapshot Snapshot) (*http.Request, error) {
 		request.Header.Set(ohm.RequestIDHeader, snapshot.RequestID)
 	}
 	return request, nil
+}
+
+func validatePath(path string) error {
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("replay snapshot path must start with /")
+	}
+	return nil
+}
+
+func requestTarget(path string, query map[string][]string) string {
+	target := url.URL{
+		Path:     path,
+		RawQuery: url.Values(query).Encode(),
+	}
+	return target.RequestURI()
 }
 
 // Run replays snapshot through handler and returns the response.

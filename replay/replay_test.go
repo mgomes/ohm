@@ -438,6 +438,102 @@ func TestNewRequestRejectsInvalidSnapshots(t *testing.T) {
 	}
 }
 
+func TestNewRequestRejectsInvalidSnapshotPaths(t *testing.T) {
+	_, err := NewRequest(Snapshot{Method: http.MethodGet, Path: "posts"})
+	if err == nil {
+		t.Fatalf("NewRequest(snapshot with relative path) error = nil, want non-nil")
+	}
+}
+
+func TestNewRequestEscapesSnapshotPath(t *testing.T) {
+	snapshot := Snapshot{
+		Method: http.MethodGet,
+		Path:   "/posts and tags/%zz?literal#fragment",
+		Query:  map[string][]string{"filter": {"recent"}},
+	}
+
+	request, err := NewRequest(snapshot)
+	if err != nil {
+		t.Fatalf("NewRequest(snapshot with decoded path) error = %v, want nil", err)
+	}
+
+	if request.URL.Path != snapshot.Path {
+		t.Errorf("NewRequest(snapshot).URL.Path = %q, want %q", request.URL.Path, snapshot.Path)
+	}
+	if got := request.URL.Query()["filter"]; !slices.Equal(got, []string{"recent"}) {
+		t.Errorf("NewRequest(snapshot).URL.Query()[filter] = %v, want [recent]", got)
+	}
+	wantEscapedPath := (&url.URL{Path: snapshot.Path}).EscapedPath()
+	if request.URL.EscapedPath() != wantEscapedPath {
+		t.Errorf("NewRequest(snapshot).URL.EscapedPath() = %q, want %q", request.URL.EscapedPath(), wantEscapedPath)
+	}
+}
+
+func FuzzNewRequest(f *testing.F) {
+	seeds := []struct {
+		method      string
+		path        string
+		queryKey    string
+		queryValue  string
+		headerKey   string
+		headerValue string
+		body        []byte
+	}{
+		{method: http.MethodGet, path: "/posts", queryKey: "filter", queryValue: "recent", headerKey: "Accept", headerValue: "application/json", body: nil},
+		{method: http.MethodPost, path: "/login", queryKey: "token", queryValue: "secret", headerKey: "Content-Type", headerValue: "application/json", body: []byte(`{"name":"Ada"}`)},
+		{method: "", path: "/posts", queryKey: "", queryValue: "", headerKey: "", headerValue: "", body: nil},
+		{method: http.MethodGet, path: "", queryKey: "", queryValue: "", headerKey: "", headerValue: "", body: nil},
+		{method: "bad method", path: "/posts", queryKey: "", queryValue: "", headerKey: "", headerValue: "", body: nil},
+		{method: http.MethodGet, path: "/posts?filter=recent", queryKey: "", queryValue: "", headerKey: "", headerValue: "", body: nil},
+		{method: "0", path: "/ ", queryKey: "", queryValue: "", headerKey: "", headerValue: "", body: nil},
+	}
+	for _, seed := range seeds {
+		f.Add(seed.method, seed.path, seed.queryKey, seed.queryValue, seed.headerKey, seed.headerValue, seed.body)
+	}
+
+	f.Fuzz(func(t *testing.T, method string, path string, queryKey string, queryValue string, headerKey string, headerValue string, body []byte) {
+		query := map[string][]string{}
+		if queryKey != "" {
+			query[queryKey] = []string{queryValue}
+		}
+		headers := map[string][]string{}
+		if headerKey != "" {
+			headers[headerKey] = []string{headerValue}
+		}
+		snapshot := Snapshot{
+			Method:    method,
+			Path:      path,
+			Query:     query,
+			Headers:   headers,
+			RequestID: "req-fuzz",
+			Body:      body,
+		}
+
+		request, err := NewRequest(snapshot)
+		if err != nil {
+			return
+		}
+		if request.Method != method {
+			t.Errorf("NewRequest(%+v).Method = %q, want %q", snapshot, request.Method, method)
+		}
+		if queryKey != "" {
+			if got := request.URL.Query()[queryKey]; !slices.Equal(got, []string{queryValue}) {
+				t.Errorf("NewRequest(%+v).URL.Query()[%q] = %v, want %v", snapshot, queryKey, got, []string{queryValue})
+			}
+		}
+		if got := request.Header.Get(ohm.RequestIDHeader); got == "" {
+			t.Errorf("NewRequest(%+v) %s header = %q, want non-empty", snapshot, ohm.RequestIDHeader, got)
+		}
+		gotBody, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("io.ReadAll(NewRequest(%+v).Body) error = %v, want nil", snapshot, err)
+		}
+		if !bytes.Equal(gotBody, body) {
+			t.Errorf("io.ReadAll(NewRequest(%+v).Body) = %q, want %q", snapshot, gotBody, body)
+		}
+	})
+}
+
 type failingReadCloser struct {
 	err error
 }

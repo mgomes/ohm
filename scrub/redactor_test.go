@@ -51,6 +51,45 @@ func TestSensitiveKeyMatchesCommonStyles(t *testing.T) {
 	}
 }
 
+func FuzzSensitiveKeyRedactsStrings(f *testing.F) {
+	for _, seed := range []struct {
+		key   string
+		value string
+	}{
+		{key: "password", value: "secret"},
+		{key: "apiKey", value: "key"},
+		{key: "X-CSRF-Token", value: "token"},
+		{key: "display_name", value: "Ada"},
+		{key: "", value: ""},
+	} {
+		f.Add(seed.key, seed.value)
+	}
+
+	f.Fuzz(func(t *testing.T, key string, value string) {
+		redactor := New()
+
+		got := redactor.Any(key, value)
+		if redactor.SensitiveKey(key) {
+			if got != defaultReplacement {
+				t.Errorf("Redactor.Any(%q, %q) = %v, want %v", key, value, got, defaultReplacement)
+			}
+		} else if got != value {
+			t.Errorf("Redactor.Any(%q, %q) = %v, want %q", key, value, got, value)
+		}
+
+		nested := redactor.Any("", map[string]any{key: value})
+		if redactor.SensitiveKey(key) {
+			nestedMap, ok := nested.(map[string]any)
+			if !ok {
+				t.Fatalf("Redactor.Any(%q, map[%q:%q]) = %T, want map[string]any", "", key, value, nested)
+			}
+			if nestedMap[key] != defaultReplacement {
+				t.Errorf("Redactor.Any(%q, map[%q:%q])[%q] = %v, want %v", "", key, value, key, nestedMap[key], defaultReplacement)
+			}
+		}
+	})
+}
+
 func TestZeroValueRedactorUsesDefaultScrubbing(t *testing.T) {
 	var redactor Redactor
 
