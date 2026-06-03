@@ -3,7 +3,7 @@
   <img src="ohm-logo-dark.svg#gh-dark-mode-only" alt="Ohm" width="180">
 </p>
 
-#
+---
 
 Ohm is a Go web framework for building server-rendered web apps with clear
 defaults and ordinary Go code.
