@@ -76,7 +76,11 @@ func Command(handler http.Handler) cli.Command {
 }
 
 func writeBoundaryWarnings(w io.Writer, snapshot Snapshot) error {
-	for _, boundary := range NormalizeBoundaries(snapshot.UncontrolledBoundaries...) {
+	boundaries, err := snapshotBoundaries(snapshot)
+	if err != nil {
+		return err
+	}
+	for _, boundary := range boundaries.uncontrolled {
 		if _, err := fmt.Fprintf(w, "Warning: replay snapshot records uncontrolled %s boundary; results may not be deterministic.\n", boundary); err != nil {
 			return fmt.Errorf("write replay determinism warning: %w", err)
 		}

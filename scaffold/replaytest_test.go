@@ -33,6 +33,9 @@ func TestGenerateReplayTestWritesRegressionTest(t *testing.T) {
 		Version: 1,
 		Method:  http.MethodGet,
 		Path:    "/",
+		ControlledBoundaries: []replay.Boundary{
+			replay.BoundaryClock,
+		},
 		ExpectedResponse: &replay.ExpectedResponse{
 			Status: http.StatusOK,
 			Headers: map[string][]string{
@@ -63,6 +66,9 @@ func TestGenerateReplayTestWritesRegressionTest(t *testing.T) {
 	}
 	if !strings.Contains(body, `replay.Run(app.New().HTTPHandler(), snapshot)`) {
 		t.Errorf("GenerateReplayTest(home-page snapshot) test = %q, want replay assertion", body)
+	}
+	if !strings.Contains(body, `replay.RequireDeterministic(snapshot)`) {
+		t.Errorf("GenerateReplayTest(home-page snapshot) test = %q, want deterministic boundary assertion", body)
 	}
 
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
@@ -136,6 +142,46 @@ func TestGenerateReplayTestRejectsUncontrolledBoundaries(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(destination, "internal", "replaytests", "login_replay_test.go")); !os.IsNotExist(statErr) {
 		t.Errorf("GenerateReplayTest(snapshot with uncontrolled boundaries) file stat error = %v, want not exist", statErr)
+	}
+}
+
+func TestGenerateReplayTestRejectsConflictingBoundaries(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "journal")
+	if err := GenerateApp(App{
+		Destination: destination,
+		Module:      "example.com/journal",
+		Database:    DatabaseSQLite,
+		OhmVersion:  "v0.0.0",
+	}); err != nil {
+		t.Fatalf("GenerateApp(journal) error = %v, want nil", err)
+	}
+
+	snapshotPath := filepath.Join(destination, "tmp", "replays", "login.json")
+	writeReplaySnapshot(t, snapshotPath, replay.Snapshot{
+		Version: 1,
+		Method:  http.MethodGet,
+		Path:    "/",
+		ControlledBoundaries: []replay.Boundary{
+			replay.BoundaryClock,
+		},
+		UncontrolledBoundaries: []replay.Boundary{
+			replay.BoundaryClock,
+		},
+		ExpectedResponse: &replay.ExpectedResponse{
+			Status: http.StatusOK,
+		},
+	})
+
+	t.Chdir(destination)
+	_, err := GenerateReplayTest(ReplayTest{SnapshotPath: snapshotPath})
+	if err == nil {
+		t.Fatalf("GenerateReplayTest(snapshot with conflicting boundaries) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "marks clock boundary as both controlled and uncontrolled") {
+		t.Errorf("GenerateReplayTest(snapshot with conflicting boundaries) error = %v, want conflict context", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(destination, "internal", "replaytests", "login_replay_test.go")); !os.IsNotExist(statErr) {
+		t.Errorf("GenerateReplayTest(snapshot with conflicting boundaries) file stat error = %v, want not exist", statErr)
 	}
 }
 

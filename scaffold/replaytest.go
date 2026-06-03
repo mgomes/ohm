@@ -77,9 +77,8 @@ func newReplayTestData(cfg ReplayTest) (replayTestData, error) {
 	if snapshot.ExpectedResponse.Status < 100 || snapshot.ExpectedResponse.Status > 999 {
 		return replayTestData{}, fmt.Errorf("replay snapshot %q expected_response.status is invalid", cfg.SnapshotPath)
 	}
-	uncontrolledBoundaries := replay.NormalizeBoundaries(snapshot.UncontrolledBoundaries...)
-	if len(uncontrolledBoundaries) > 0 {
-		return replayTestData{}, fmt.Errorf("replay snapshot %q records uncontrolled boundaries (%s); make those boundaries deterministic before generating a regression test", cfg.SnapshotPath, replayBoundaryList(uncontrolledBoundaries))
+	if err := replay.RequireDeterministic(snapshot); err != nil {
+		return replayTestData{}, fmt.Errorf("replay snapshot %q is not deterministic: %w", cfg.SnapshotPath, err)
 	}
 
 	module, err := readModulePath("go.mod")
@@ -121,14 +120,6 @@ func readReplaySnapshot(path string) (replay.Snapshot, error) {
 		return replay.Snapshot{}, fmt.Errorf("decode replay snapshot %q: %w", path, err)
 	}
 	return snapshot, nil
-}
-
-func replayBoundaryList(boundaries []replay.Boundary) string {
-	values := make([]string, 0, len(boundaries))
-	for _, boundary := range boundaries {
-		values = append(values, string(boundary))
-	}
-	return strings.Join(values, ", ")
 }
 
 func readModulePath(path string) (string, error) {
@@ -237,6 +228,9 @@ func {{.TestName}}(t *testing.T) {
 	}
 	if snapshot.ExpectedResponse == nil {
 		t.Fatalf("snapshot.ExpectedResponse = nil, want response expectation")
+	}
+	if err := replay.RequireDeterministic(snapshot); err != nil {
+		t.Fatalf("replay.RequireDeterministic(snapshot) error = %v, want nil", err)
 	}
 
 	response, err := replay.Run(app.New().HTTPHandler(), snapshot)

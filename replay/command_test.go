@@ -130,6 +130,26 @@ func TestCommandWarnsAboutUncontrolledBoundaries(t *testing.T) {
 	}
 }
 
+func TestCommandRejectsUnknownBoundaryMetadata(t *testing.T) {
+	path := writeSnapshot(t, Snapshot{
+		Version: snapshotVersion,
+		Method:  http.MethodGet,
+		Path:    "/posts/42",
+		ControlledBoundaries: []Boundary{
+			Boundary("network"),
+		},
+	})
+
+	command := Command(http.NewServeMux())
+	err := command.Run(context.Background(), cli.IO{}, []string{path})
+	if err == nil {
+		t.Fatalf("Command(handler).Run(ctx, io, %v) error = nil, want non-nil", []string{path})
+	}
+	if !strings.Contains(err.Error(), `unknown controlled boundary "network"`) {
+		t.Errorf("Command(handler).Run(ctx, io, %v) error = %v, want boundary validation context", []string{path}, err)
+	}
+}
+
 func TestCommandPropagatesContextToReplayRequest(t *testing.T) {
 	app := ohm.New()
 	app.Get("/context", func(req *ohm.Request) error {
