@@ -445,6 +445,27 @@ func TestGeneratedSQLiteApplicationBuilds(t *testing.T) {
 	runGo(t, destination, "test", "./...")
 }
 
+func TestGeneratedPostgresApplicationBuilds(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "smokepg")
+	err := GenerateApp(App{
+		Destination: destination,
+		Module:      "example.com/smokepg",
+		Database:    DatabasePostgres,
+		OhmVersion:  "v0.0.0",
+	})
+	if err != nil {
+		t.Fatalf("GenerateApp(postgres smoke app) error = %v, want nil", err)
+	}
+	t.Setenv("DATABASE_URL", "")
+
+	root := repoRoot(t)
+	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
+	runGo(t, destination, "mod", "tidy")
+	runGo(t, destination, "run", "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0", "generate")
+	runGo(t, destination, "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
+	runGo(t, destination, "test", "./...")
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 
