@@ -456,6 +456,7 @@ func TestGeneratedPostgresApplicationBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateApp(postgres smoke app) error = %v, want nil", err)
 	}
+	t.Setenv("DATABASE_URL", "")
 
 	root := repoRoot(t)
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
