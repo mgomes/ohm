@@ -22,6 +22,11 @@ runtime dependency for deployed applications.
 
 Ohm will provide a framework CLI named `ohm`.
 
+Both the framework CLI and generated application CLIs use Ohm's small `cli`
+package. The shared package keeps command parsing, help text, and IO handling
+consistent without making the framework CLI a runtime dependency for generated
+applications.
+
 The initial framework CLI should support:
 
 ```text
@@ -48,6 +53,10 @@ The generated application CLI should be ordinary Go code in the application,
 not a framework-owned runtime command. Applications can add their own commands
 without registering them through a global framework plugin system.
 
+The first resource generator writes a routed handler skeleton, route
+registration, a migration, and a sqlc query file. It is additive and should not
+overwrite application-owned files.
+
 Generators should create boring, idiomatic Go code. They should prefer explicit
 files and ordinary package boundaries over reflection, implicit naming rules, or
 runtime discovery.
@@ -72,8 +81,4 @@ framework support is solid.
 
 ## Open questions
 
-- Which command package should Ohm use for CLI construction?
-- Should generated application commands use the same package as the framework
-  CLI?
-- How much should `ohm generate resource` create in the first version?
 - Should generators support destructive cleanup, or only additive changes?

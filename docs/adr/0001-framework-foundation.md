@@ -26,7 +26,8 @@ The first applications built with Ohm should have a clear default path for:
 Ohm will use these defaults:
 
 - `chi` for HTTP routing.
-- `github.com/go-chi/render` for HTTP response rendering.
+- Ohm-owned request and response helpers for decoding, rendering, and response
+  status handling.
 - `sqlc` for typed query generation.
 - `slog` for structured logging.
 - Built-in log scrubbing for sensitive values in params, headers, errors, and
@@ -42,9 +43,9 @@ Ohm will use these defaults:
 - Postgres as the default database, using `pgx`.
 - SQLite as an explicit generator option for smaller apps and tests.
 
-Ohm should eventually hide `chi` and most direct `net/http` usage behind
-framework-level routing, handler, middleware, rendering, and error APIs. This
-does not mean replacing Go's HTTP model with implicit behavior. It means
+Ohm should keep `chi` at the routing edge and hide direct route context access
+behind framework-level routing, handler, middleware, rendering, and error APIs.
+This does not mean replacing Go's HTTP model with implicit behavior. It means
 application code should usually speak Ohm while advanced users retain escape
 hatches to ordinary `http.Handler`, `http.Request`, and `http.ResponseWriter`.
 

@@ -50,6 +50,11 @@ Tests that require a database should make that requirement explicit. They
 should not silently fall back to a different database engine unless the test is
 specifically written to validate that behavior.
 
+Generated view tests should use rendered HTML assertions rather than golden
+files in the first version. This keeps each test close to the behavior it
+protects and avoids broad fixture churn while the generated view structure is
+still settling.
+
 ## Consequences
 
 Ohm's default application structure will be shaped by testability. App wiring,
@@ -67,4 +72,3 @@ main path.
 
 - Should generated apps include a default Postgres test container workflow?
 - Should Ohm provide fixture helpers, factory helpers, both, or neither?
-- Should view tests use rendered HTML assertions, golden files, or both?
