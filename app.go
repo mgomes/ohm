@@ -3,6 +3,7 @@ package ohm
 import (
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -16,6 +17,9 @@ type Middleware func(http.Handler) http.Handler
 // ErrorHandler handles errors returned by Ohm handlers.
 type ErrorHandler func(*Request, error)
 
+// MethodNotAllowedHandler handles requests whose path matches other methods.
+type MethodNotAllowedHandler func(http.ResponseWriter, *http.Request, []string)
+
 // App is an Ohm HTTP application.
 type App struct {
 	router       chi.Router
@@ -24,15 +28,6 @@ type App struct {
 
 // Option configures an App.
 type Option func(*App)
-
-// WithRouter configures the chi router used by an app.
-func WithRouter(router chi.Router) Option {
-	return func(app *App) {
-		if router != nil {
-			app.router = router
-		}
-	}
-}
 
 // WithErrorHandler configures how handler errors are rendered.
 func WithErrorHandler(handler ErrorHandler) Option {
@@ -67,9 +62,29 @@ func (a *App) Handle(method string, pattern string, handler Handler) {
 	a.router.Method(method, pattern, a.adapt(handler))
 }
 
+// HandleHTTP registers handler for method and pattern.
+func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
+	a.router.Method(method, pattern, handler)
+}
+
 // Get registers a GET route.
 func (a *App) Get(pattern string, handler Handler) {
 	a.Handle(http.MethodGet, pattern, handler)
+}
+
+// GetHTTP registers an HTTP handler for a GET route.
+func (a *App) GetHTTP(pattern string, handler http.Handler) {
+	a.HandleHTTP(http.MethodGet, pattern, handler)
+}
+
+// Head registers a HEAD route.
+func (a *App) Head(pattern string, handler Handler) {
+	a.Handle(http.MethodHead, pattern, handler)
+}
+
+// HeadHTTP registers an HTTP handler for a HEAD route.
+func (a *App) HeadHTTP(pattern string, handler http.Handler) {
+	a.HandleHTTP(http.MethodHead, pattern, handler)
 }
 
 // Post registers a POST route.
@@ -92,6 +107,31 @@ func (a *App) Delete(pattern string, handler Handler) {
 	a.Handle(http.MethodDelete, pattern, handler)
 }
 
+// Static registers GET and HEAD routes for files under root.
+func (a *App) Static(pattern string, root string) {
+	prefix := staticPrefix(pattern)
+	files := http.StripPrefix(prefix, http.FileServer(http.Dir(root)))
+	a.GetHTTP(pattern, files)
+	a.HeadHTTP(pattern, files)
+}
+
+// NotFound configures the handler used when no route matches.
+func (a *App) NotFound(handler http.HandlerFunc) {
+	if handler != nil {
+		a.router.NotFound(handler)
+	}
+}
+
+// MethodNotAllowed configures the handler used when only the method is missing.
+func (a *App) MethodNotAllowed(handler MethodNotAllowedHandler) {
+	if handler == nil {
+		return
+	}
+	a.router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		handler(w, r, a.AllowedMethods(r.URL.Path))
+	})
+}
+
 // ServeHTTP serves HTTP requests.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.router.ServeHTTP(w, r)
@@ -99,11 +139,6 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // HTTPHandler returns the underlying HTTP handler.
 func (a *App) HTTPHandler() http.Handler {
-	return a.router
-}
-
-// ChiRouter returns the underlying chi router escape hatch.
-func (a *App) ChiRouter() chi.Router {
 	return a.router
 }
 
@@ -138,8 +173,12 @@ func (a *App) Routes() ([]Route, error) {
 	return routes, nil
 }
 
-// AllowedMethods returns HTTP methods that match path in routes.
-func AllowedMethods(routes chi.Routes, path string) []string {
+// AllowedMethods returns HTTP methods that match path.
+func (a *App) AllowedMethods(path string) []string {
+	return allowedMethods(a.router, path)
+}
+
+func allowedMethods(routes chi.Routes, path string) []string {
 	if routes == nil {
 		return nil
 	}
@@ -165,6 +204,14 @@ func AllowedMethods(routes chi.Routes, path string) []string {
 		}
 	}
 	return allowed
+}
+
+func staticPrefix(pattern string) string {
+	prefix := strings.TrimSuffix(pattern, "*")
+	if prefix == "" {
+		return "/"
+	}
+	return prefix
 }
 
 func (a *App) adapt(handler Handler) http.Handler {

@@ -26,7 +26,7 @@ internal/views/components/
 ```
 
 The framework should provide rendering helpers that integrate templ components
-with `github.com/go-chi/render`.
+with Ohm's response boundary.
 
 The default view conventions should include:
 
@@ -42,16 +42,16 @@ View rendering should stay explicit. Handlers should choose the page or
 component they render, pass typed data into it, and return either HTML or a
 structured response through the same rendering boundary.
 
-Ohm should support JSON rendering as a first-class path through `chi/render`.
-HTML views are a default, not the only response type.
+Ohm should support JSON rendering as a first-class path. HTML views are a
+default, not the only response type.
 
 ## Consequences
 
 Using templ gives Ohm compile-time checking for server-rendered views and keeps
 view code close to ordinary Go.
 
-Integrating templ with `chi/render` keeps the framework's response story
-consistent for HTML, JSON, redirects, and errors.
+Integrating templ with Ohm's response boundary keeps the framework's response
+story consistent for HTML, JSON, redirects, and errors.
 
 Ohm should avoid building a large custom template language. If templ proves to
 be the wrong default during implementation, the framework should revisit this

@@ -16,7 +16,6 @@ import (
 
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/render"
 	"github.com/mgomes/ohm/scrub"
 )
 
@@ -86,8 +85,7 @@ func Recoverer(logger *slog.Logger) Middleware {
 				if committed {
 					return
 				}
-				render.Status(r, http.StatusInternalServerError)
-				render.PlainText(tracked, r, http.StatusText(http.StatusInternalServerError))
+				renderPlainText(tracked, r, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
 			}()
 
 			next.ServeHTTP(tracked, r)

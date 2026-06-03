@@ -3,8 +3,6 @@ package ohm
 import (
 	"errors"
 	"net/http"
-
-	"github.com/go-chi/render"
 )
 
 // HTTPError is an error with an HTTP response status.
@@ -39,11 +37,10 @@ func NewHTTPError(status int, message string, err error) *HTTPError {
 	}
 }
 
-// DefaultErrorHandler renders handler errors as plain text through chi/render.
+// DefaultErrorHandler renders handler errors as plain text.
 func DefaultErrorHandler(req *Request, err error) {
 	status, message := ErrorResponse(err)
-	render.Status(req.HTTPRequest(), status)
-	render.PlainText(req.ResponseWriter(), req.HTTPRequest(), message)
+	req.PlainText(status, message)
 }
 
 // ErrorResponse returns the safe HTTP status and public message for err.
