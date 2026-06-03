@@ -51,6 +51,15 @@ with clear errors when required settings are missing or malformed.
 Configuration loading should be usable by all application commands, including
 `server`, `migrate`, `routes`, tests, and custom app commands.
 
+Generated applications should include `.env.example`,
+`.env.development.example`, and `.env.test.example` by default. Shared values
+belong in `.env.example`; environment-specific database settings belong in the
+environment-specific example files.
+
+Sensitive configuration values should use `config.Secret`. A secret can be
+revealed explicitly by application code, but it redacts itself when formatted,
+logged through `slog`, or encoded as JSON.
+
 ## Consequences
 
 Ohm applications get a Rails-like local configuration experience without
@@ -67,6 +76,3 @@ ADR and a precise compatibility contract.
 
 - Should Ohm reserve additional environment names beyond `development`, `test`,
   and `production`?
-- Should generated apps include `.env.example` by default?
-- Should secrets be represented by a dedicated type that redacts itself in
-  logs and error messages?

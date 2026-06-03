@@ -65,6 +65,8 @@ Applications may extend the scrub list through configuration. Applications may
 also mark explicit values as sensitive so they are always redacted regardless of
 attribute key.
 
+Ohm will use `[REDACTED]` as the default replacement string for scrubbed values.
+
 ## Consequences
 
 The framework can make structured logging the default without making sensitive
@@ -79,7 +81,6 @@ boundary.
 
 ## Open questions
 
-- What redaction string should Ohm use?
 - Should Ohm support value-pattern scrubbing, or only key-based and explicit
   sensitive-value scrubbing?
 - Should email addresses be scrubbed by default or left visible for operational

@@ -51,6 +51,9 @@ Ohm should provide a transaction helper that makes the common path concise
 without hiding transaction ownership. Services should own multi-query workflows
 that need a transaction.
 
+The transaction helper shape is `sqltx.Do(ctx, db, opts, fn)`. The caller owns
+the database handle and the service owns the transaction boundary.
+
 Generated application CLIs should include migration commands:
 
 ```text
@@ -61,6 +64,14 @@ myapp migrate status
 
 Generated justfiles should include common database tasks for migration, sqlc
 generation, reset, and test setup.
+
+Generated applications should include seed support in the first version through
+`myapp db seed` and `just db-seed`.
+
+Generated test database behavior should follow the selected application
+database. SQLite apps use isolated temporary databases in tests. Postgres apps
+use `DATABASE_URL`; tests that need a real Postgres database skip when it is not
+configured.
 
 ## Consequences
 
@@ -73,10 +84,3 @@ possibly tests, but it should not distort the Postgres design.
 The framework will need clear abstractions around database drivers because
 Postgres and SQLite have different connection, migration, and sqlc
 configuration needs.
-
-## Open questions
-
-- Should test databases default to Postgres, SQLite, or follow the selected app
-  database?
-- Should Ohm generate seed support in the first version?
-- What transaction helper shape best balances explicitness and ergonomics?
