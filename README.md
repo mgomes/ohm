@@ -11,7 +11,7 @@ It gives you the shape of a complete web app without hiding Go:
 
 - A framework CLI for creating apps and generating code.
 - An app-owned CLI for serving, routing, migrating, seeding, and replaying.
-- `chi` routing behind a small Ohm handler layer.
+- Routing behind a small Ohm handler layer.
 - `templ` views for pages, layouts, components, forms, and errors.
 - Typed config backed by deterministic `.env` loading.
 - `sqlc` queries and `goose` migrations instead of an ORM.

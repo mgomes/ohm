@@ -46,8 +46,7 @@ Ohm should eventually hide `chi` and most direct `net/http` usage behind
 framework-level routing, handler, middleware, rendering, and error APIs. This
 does not mean replacing Go's HTTP model with implicit behavior. It means
 application code should usually speak Ohm while advanced users retain escape
-hatches to ordinary `http.Handler`, `http.Request`, `http.ResponseWriter`, and
-chi internals where needed.
+hatches to ordinary `http.Handler`, `http.Request`, and `http.ResponseWriter`.
 
 Ohm will use `handlers` as the HTTP boundary name instead of `controllers`.
 The initial application architecture is:

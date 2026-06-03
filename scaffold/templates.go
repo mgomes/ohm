@@ -66,7 +66,6 @@ func run(ctx context.Context, args []string) error {
 
 import (
 	"log/slog"
-	"net/http"
 	"os"
 
 	"github.com/mgomes/ohm"
@@ -100,14 +99,9 @@ func New(opts ...Option) *ohm.App {
 	logger := slog.New(scrub.NewHandler(slog.NewJSONHandler(os.Stderr, nil)))
 	application := ohm.New(ohm.WithErrorHandler(handleError))
 	application.Use(ohm.RequestLogger(logger), ohm.Recoverer(logger))
-	assets := http.StripPrefix("/assets/", http.FileServer(http.Dir(cfg.staticRoot)))
-	router := application.ChiRouter()
-	router.Get("/assets/*", assets.ServeHTTP)
-	router.Head("/assets/*", assets.ServeHTTP)
-	router.NotFound(notFound)
-	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		methodNotAllowed(w, r, ohm.AllowedMethods(router, r.URL.Path))
-	})
+	application.Static("/assets/*", cfg.staticRoot)
+	application.NotFound(notFound)
+	application.MethodNotAllowed(methodNotAllowed)
 	handlers.Register(application)
 	return application
 }

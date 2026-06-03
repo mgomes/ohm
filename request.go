@@ -17,6 +17,16 @@ type Request struct {
 	r *http.Request
 }
 
+// Binder decodes and validates a request body.
+type Binder interface {
+	Bind(*http.Request) error
+}
+
+// Renderer writes a structured response.
+type Renderer interface {
+	Render(http.ResponseWriter, *http.Request) error
+}
+
 func newRequest(w http.ResponseWriter, r *http.Request) *Request {
 	return &Request{w: w, r: r}
 }
@@ -50,18 +60,18 @@ func (r *Request) RoutePattern() string {
 	return routeContext.RoutePattern()
 }
 
-// Bind decodes and validates a request body with chi/render.
-func (r *Request) Bind(v render.Binder) error {
+// Bind decodes and validates a request body.
+func (r *Request) Bind(v Binder) error {
 	return render.Bind(r.r, v)
 }
 
-// Decode decodes a request body with chi/render.
+// Decode decodes a request body.
 func (r *Request) Decode(v any) error {
 	return render.Decode(r.r, v)
 }
 
-// Render renders a chi/render response.
-func (r *Request) Render(v render.Renderer) error {
+// Render renders a structured response.
+func (r *Request) Render(v Renderer) error {
 	return render.Render(r.w, r.r, v)
 }
 
@@ -103,8 +113,7 @@ func (r *Request) JSON(status int, v any) {
 
 // PlainText renders text with status.
 func (r *Request) PlainText(status int, text string) {
-	render.Status(r.r, status)
-	render.PlainText(r.w, r.r, text)
+	renderPlainText(r.w, r.r, status, text)
 }
 
 // NoContent renders an empty 204 response.
@@ -115,4 +124,9 @@ func (r *Request) NoContent() {
 // Redirect redirects to url with status.
 func (r *Request) Redirect(status int, url string) {
 	http.Redirect(r.w, r.r, url, status)
+}
+
+func renderPlainText(w http.ResponseWriter, r *http.Request, status int, text string) {
+	render.Status(r, status)
+	render.PlainText(w, r, text)
 }

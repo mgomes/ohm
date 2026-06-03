@@ -220,19 +220,16 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(appFile, `ohm.New(ohm.WithErrorHandler(handleError))`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want HTML error handler", appFile)
 	}
-	if !strings.Contains(appFile, `router := application.ChiRouter()`) {
-		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want shared chi router binding", appFile)
+	if strings.Contains(appFile, `ChiRouter`) {
+		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want no chi router dependency", appFile)
 	}
-	if !strings.Contains(appFile, `router.Get("/assets/*", assets.ServeHTTP)`) {
+	if !strings.Contains(appFile, `application.Static("/assets/*", cfg.staticRoot)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want GET static asset route", appFile)
 	}
-	if !strings.Contains(appFile, `router.Head("/assets/*", assets.ServeHTTP)`) {
-		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want HEAD static asset route", appFile)
-	}
-	if !strings.Contains(appFile, `router.NotFound(notFound)`) {
+	if !strings.Contains(appFile, `application.NotFound(notFound)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want not found error page", appFile)
 	}
-	if !strings.Contains(appFile, `methodNotAllowed(w, r, ohm.AllowedMethods(router, r.URL.Path))`) {
+	if !strings.Contains(appFile, `application.MethodNotAllowed(methodNotAllowed)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/app/app.go = %q, want method not allowed header preservation", appFile)
 	}
 

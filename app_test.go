@@ -7,12 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/a-h/templ"
-	"github.com/go-chi/chi/v5"
 )
 
 func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
@@ -282,15 +283,98 @@ func TestAppRoutesReturnsRegisteredRoutes(t *testing.T) {
 	}
 }
 
-func TestAllowedMethodsReturnsMatchingRouteMethods(t *testing.T) {
-	router := chi.NewRouter()
-	router.Get("/assets/*", func(http.ResponseWriter, *http.Request) {})
-	router.Head("/assets/*", func(http.ResponseWriter, *http.Request) {})
+func TestAppStaticServesGetAndHead(t *testing.T) {
+	staticRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staticRoot, "app.css"), []byte("body { color: black; }\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(static asset) error = %v, want nil", err)
+	}
+	app := New()
+	app.Static("/assets/*", staticRoot)
 
-	got := AllowedMethods(router, "/assets/app.css")
+	getResponse := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
+
+	app.ServeHTTP(getResponse, getRequest)
+
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("App.Static(%q, %q) GET status = %d, want %d", "/assets/*", staticRoot, getResponse.Code, http.StatusOK)
+	}
+	if !strings.Contains(getResponse.Body.String(), "body { color: black; }") {
+		t.Errorf("App.Static(%q, %q) GET body = %q, want static asset", "/assets/*", staticRoot, getResponse.Body.String())
+	}
+
+	headResponse := httptest.NewRecorder()
+	headRequest := httptest.NewRequest(http.MethodHead, "/assets/app.css", nil)
+
+	app.ServeHTTP(headResponse, headRequest)
+
+	if headResponse.Code != http.StatusOK {
+		t.Errorf("App.Static(%q, %q) HEAD status = %d, want %d", "/assets/*", staticRoot, headResponse.Code, http.StatusOK)
+	}
+}
+
+func TestAppUsesNotFoundHandler(t *testing.T) {
+	app := New()
+	app.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "missing", http.StatusNotFound)
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/missing", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusNotFound {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(res.Body.String(), "missing") {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want missing message", request.Method, request.URL.Path, res.Body.String())
+	}
+}
+
+func TestAppUsesMethodNotAllowedHandler(t *testing.T) {
+	app := New()
+	app.Get("/posts", func(req *Request) error {
+		return nil
+	})
+	app.Head("/posts", func(req *Request) error {
+		return nil
+	})
+	app.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request, allowedMethods []string) {
+		for _, method := range allowedMethods {
+			w.Header().Add("Allow", method)
+		}
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/posts", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusMethodNotAllowed)
+	}
+	want := []string{http.MethodGet, http.MethodHead}
+	got := res.Header().Values("Allow")
+	if !slices.Equal(got, want) {
+		t.Errorf("App.ServeHTTP(%s %s) Allow header = %v, want %v", request.Method, request.URL.Path, got, want)
+	}
+}
+
+func TestAllowedMethodsReturnsMatchingRouteMethods(t *testing.T) {
+	app := New()
+	app.Get("/assets/*", func(req *Request) error {
+		return nil
+	})
+	app.Head("/assets/*", func(req *Request) error {
+		return nil
+	})
+
+	got := app.AllowedMethods("/assets/app.css")
 	want := []string{http.MethodGet, http.MethodHead}
 
 	if !slices.Equal(got, want) {
-		t.Errorf("AllowedMethods(router, %q) = %v, want %v", "/assets/app.css", got, want)
+		t.Errorf("App.AllowedMethods(%q) = %v, want %v", "/assets/app.css", got, want)
 	}
 }
