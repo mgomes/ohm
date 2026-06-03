@@ -1,5 +1,6 @@
 <p align="center">
-  <img src="ohm-logo.svg" alt="Ohm" width="180">
+  <img src="ohm-logo.svg#gh-light-mode-only" alt="Ohm" width="180">
+  <img src="ohm-logo-dark.svg#gh-dark-mode-only" alt="Ohm" width="180">
 </p>
 
 # Ohm
