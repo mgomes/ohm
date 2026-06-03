@@ -185,6 +185,47 @@ func TestGenerateReplayTestRejectsConflictingBoundaries(t *testing.T) {
 	}
 }
 
+func TestGenerateReplayTestRejectsUnknownSnapshotFields(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "journal")
+	if err := GenerateApp(App{
+		Destination: destination,
+		Module:      "example.com/journal",
+		Database:    DatabaseSQLite,
+		OhmVersion:  "v0.0.0",
+	}); err != nil {
+		t.Fatalf("GenerateApp(journal) error = %v, want nil", err)
+	}
+
+	snapshotPath := filepath.Join(destination, "tmp", "replays", "login.json")
+	if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(%q) error = %v, want nil", filepath.Dir(snapshotPath), err)
+	}
+	body := []byte(`{
+		"version": 1,
+		"method": "GET",
+		"path": "/",
+		"uncontrolled_boundary": ["clock"],
+		"expected_response": {
+			"status": 200
+		}
+	}`)
+	if err := os.WriteFile(snapshotPath, body, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", snapshotPath, err)
+	}
+
+	t.Chdir(destination)
+	_, err := GenerateReplayTest(ReplayTest{SnapshotPath: snapshotPath})
+	if err == nil {
+		t.Fatalf("GenerateReplayTest(snapshot with unknown field) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), `unknown field "uncontrolled_boundary"`) {
+		t.Errorf("GenerateReplayTest(snapshot with unknown field) error = %v, want unknown field context", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(destination, "internal", "replaytests", "login_replay_test.go")); !os.IsNotExist(statErr) {
+		t.Errorf("GenerateReplayTest(snapshot with unknown field) file stat error = %v, want not exist", statErr)
+	}
+}
+
 func TestGenerateReplayTestDoesNotOverwriteExistingFile(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "journal")
 	if err := GenerateApp(App{

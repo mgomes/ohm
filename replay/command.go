@@ -126,7 +126,8 @@ func readSnapshot(path string) (snapshot Snapshot, err error) {
 		}
 	}()
 
-	if err := json.NewDecoder(file).Decode(&snapshot); err != nil {
+	snapshot, err = DecodeSnapshot(file)
+	if err != nil {
 		return Snapshot{}, fmt.Errorf("decode replay snapshot %q: %w", path, err)
 	}
 	return snapshot, nil

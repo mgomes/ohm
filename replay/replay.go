@@ -248,6 +248,31 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 	return snapshot, nil
 }
 
+// DecodeSnapshot decodes one replay snapshot and rejects unknown fields.
+func DecodeSnapshot(r io.Reader) (Snapshot, error) {
+	if r == nil {
+		return Snapshot{}, fmt.Errorf("replay snapshot reader is required")
+	}
+
+	decoder := json.NewDecoder(r)
+	decoder.DisallowUnknownFields()
+
+	var snapshot Snapshot
+	if err := decoder.Decode(&snapshot); err != nil {
+		return Snapshot{}, err
+	}
+
+	var extra json.RawMessage
+	err := decoder.Decode(&extra)
+	if err == nil {
+		return Snapshot{}, fmt.Errorf("replay snapshot must contain one JSON value")
+	}
+	if err != io.EOF {
+		return Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
 // ValidateBoundaries verifies that replay boundary metadata uses known names
 // and does not mark a boundary as both controlled and uncontrolled.
 func ValidateBoundaries(snapshot Snapshot) error {

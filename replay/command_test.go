@@ -240,6 +240,23 @@ func TestCommandRejectsInvalidSnapshotFile(t *testing.T) {
 	}
 }
 
+func TestCommandRejectsUnknownSnapshotFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	body := []byte(`{"version":1,"method":"GET","path":"/","uncontrolled_boundary":["clock"]}`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", path, err)
+	}
+
+	command := Command(http.NewServeMux())
+	err := command.Run(context.Background(), cli.IO{}, []string{path})
+	if err == nil {
+		t.Fatalf("Command(handler).Run(ctx, io, %v) error = nil, want non-nil", []string{path})
+	}
+	if !strings.Contains(err.Error(), `unknown field "uncontrolled_boundary"`) {
+		t.Errorf("Command(handler).Run(ctx, io, %v) error = %v, want unknown field context", []string{path}, err)
+	}
+}
+
 func TestCommandRequiresHandler(t *testing.T) {
 	path := writeSnapshot(t, Snapshot{
 		Version: snapshotVersion,

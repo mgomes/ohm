@@ -115,8 +115,8 @@ func readReplaySnapshot(path string) (replay.Snapshot, error) {
 		return replay.Snapshot{}, fmt.Errorf("read replay snapshot %q: %w", path, err)
 	}
 
-	var snapshot replay.Snapshot
-	if err := json.Unmarshal(data, &snapshot); err != nil {
+	snapshot, err := replay.DecodeSnapshot(bytes.NewReader(data))
+	if err != nil {
 		return replay.Snapshot{}, fmt.Errorf("decode replay snapshot %q: %w", path, err)
 	}
 	return snapshot, nil
@@ -212,7 +212,6 @@ const replayTestTemplate = `package replaytests
 
 import (
 	"bytes"
-	"encoding/json"
 	"slices"
 	"testing"
 
@@ -222,9 +221,9 @@ import (
 )
 
 func {{.TestName}}(t *testing.T) {
-	var snapshot replay.Snapshot
-	if err := json.Unmarshal([]byte({{.SnapshotJSON}}), &snapshot); err != nil {
-		t.Fatalf("json.Unmarshal(snapshot) error = %v, want nil", err)
+	snapshot, err := replay.DecodeSnapshot(bytes.NewReader([]byte({{.SnapshotJSON}})))
+	if err != nil {
+		t.Fatalf("replay.DecodeSnapshot(snapshot) error = %v, want nil", err)
 	}
 	if snapshot.ExpectedResponse == nil {
 		t.Fatalf("snapshot.ExpectedResponse = nil, want response expectation")

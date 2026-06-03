@@ -171,6 +171,35 @@ func TestCaptureRejectsInvalidBoundaryMetadata(t *testing.T) {
 	}
 }
 
+func TestDecodeSnapshotRejectsUnknownFields(t *testing.T) {
+	input := `{
+		"version": 1,
+		"method": "GET",
+		"path": "/",
+		"uncontrolled_boundary": ["clock"]
+	}`
+
+	_, err := DecodeSnapshot(strings.NewReader(input))
+	if err == nil {
+		t.Fatalf("DecodeSnapshot(snapshot with unknown field) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), `unknown field "uncontrolled_boundary"`) {
+		t.Errorf("DecodeSnapshot(snapshot with unknown field) error = %v, want unknown field context", err)
+	}
+}
+
+func TestDecodeSnapshotRejectsTrailingValues(t *testing.T) {
+	input := `{"version":1,"method":"GET","path":"/"} {}`
+
+	_, err := DecodeSnapshot(strings.NewReader(input))
+	if err == nil {
+		t.Fatalf("DecodeSnapshot(snapshot with trailing value) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "must contain one JSON value") {
+		t.Errorf("DecodeSnapshot(snapshot with trailing value) error = %v, want single value context", err)
+	}
+}
+
 func TestRequireDeterministicAcceptsControlledBoundaries(t *testing.T) {
 	snapshot := Snapshot{
 		ControlledBoundaries: []Boundary{
