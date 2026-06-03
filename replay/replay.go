@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/mgomes/ohm"
 	"github.com/mgomes/ohm/scrub"
 )
@@ -479,27 +478,19 @@ func scrubBody(redactor *scrub.Redactor, contentType string, body []byte) ([]byt
 }
 
 func routePattern(r *http.Request) string {
-	routeContext := chi.RouteContext(r.Context())
-	if routeContext == nil {
-		return ""
-	}
-	return routeContext.RoutePattern()
+	return ohm.RoutePattern(r)
 }
 
 func routeParams(redactor *scrub.Redactor, r *http.Request) map[string]string {
-	routeContext := chi.RouteContext(r.Context())
-	if routeContext == nil || len(routeContext.URLParams.Keys) == 0 {
+	rawParams := ohm.RouteParams(r)
+	if len(rawParams) == 0 {
 		return nil
 	}
 
-	params := make(map[string]string, len(routeContext.URLParams.Keys))
-	for i, key := range routeContext.URLParams.Keys {
+	params := make(map[string]string, len(rawParams))
+	for key, value := range rawParams {
 		if key == "" {
 			continue
-		}
-		value := ""
-		if i < len(routeContext.URLParams.Values) {
-			value = routeContext.URLParams.Values[i]
 		}
 		if redactor.SensitiveKey(key) {
 			value = fmt.Sprint(redactor.Any(key, value))

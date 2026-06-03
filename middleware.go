@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/felixge/httpsnoop"
-	"github.com/go-chi/chi/v5"
 	"github.com/mgomes/ohm/scrub"
 )
 
@@ -120,7 +119,7 @@ func requestLogAttrs(r *http.Request, requestID string, status int, duration tim
 		slog.Int64("content_length", r.ContentLength),
 	}
 
-	if routePattern := routePattern(r); routePattern != "" {
+	if routePattern := RoutePattern(r); routePattern != "" {
 		attrs = append(attrs, slog.String("route_pattern", routePattern))
 	}
 	return attrs
@@ -193,14 +192,6 @@ func (s *responseState) committed() bool {
 
 func finalStatus(code int) bool {
 	return code == http.StatusSwitchingProtocols || code >= 200
-}
-
-func routePattern(r *http.Request) string {
-	routeContext := chi.RouteContext(r.Context())
-	if routeContext == nil {
-		return ""
-	}
-	return routeContext.RoutePattern()
 }
 
 func newRequestID() string {
