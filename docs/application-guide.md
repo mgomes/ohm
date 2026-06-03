@@ -190,6 +190,10 @@ Replay snapshots are local debugging artifacts. Before committing a snapshot,
 review it and scrub sensitive values. Snapshots can contain request and
 response detail, including expected response data.
 
+Use `controlled_boundaries` in the snapshot to document dependencies that were
+pinned for replay. Use `uncontrolled_boundaries` for dependencies that may
+change the result, such as clock, randomness, external HTTP, email, file
+writes, database state, or feature flags.
+
 Do not generate a replay test while the snapshot records uncontrolled
-boundaries such as clock, randomness, external HTTP, email, file writes,
-database state, or feature flags. Make the boundary deterministic first.
+boundaries. Make the boundary deterministic first.

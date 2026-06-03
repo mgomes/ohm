@@ -123,6 +123,8 @@ go run ./cmd/journal replay --write-expected ./tmp/replays/login-failure.json
 ohm generate test-from-replay ./tmp/replays/login-failure.json
 ```
 
-Replay depends on deterministic boundaries. If a request depends on
-uncontrolled time, randomness, external services, or database state, make that
-boundary explicit before turning the replay into a regression test.
+Replay depends on deterministic boundaries. If a request depends on time,
+randomness, external services, database state, or feature flags, record that
+boundary in the snapshot. Mark pinned dependencies as `controlled_boundaries`
+and leave changing dependencies in `uncontrolled_boundaries` until the replay is
+stable enough for a regression test.

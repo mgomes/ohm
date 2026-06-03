@@ -126,22 +126,143 @@ func TestCaptureIncludesOptionalMetadata(t *testing.T) {
 	}
 }
 
-func TestCaptureIncludesNormalizedUncontrolledBoundaries(t *testing.T) {
+func TestCaptureIncludesNormalizedBoundaryMetadata(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 
-	got, err := Capture(request, WithUncontrolledBoundaries(
-		BoundaryClock,
-		BoundaryDatabaseState,
-		Boundary(" "),
-		BoundaryClock,
-	))
+	got, err := Capture(request,
+		WithControlledBoundaries(
+			BoundaryExternalHTTP,
+			Boundary(" "),
+			BoundaryExternalHTTP,
+		),
+		WithUncontrolledBoundaries(
+			BoundaryClock,
+			BoundaryDatabaseState,
+			Boundary(" "),
+			BoundaryClock,
+		),
+	)
 	if err != nil {
-		t.Fatalf("Capture(request, uncontrolled boundaries) error = %v, want nil", err)
+		t.Fatalf("Capture(request, boundary options) error = %v, want nil", err)
 	}
 
-	want := []Boundary{BoundaryClock, BoundaryDatabaseState}
-	if !slices.Equal(got.UncontrolledBoundaries, want) {
-		t.Errorf("Capture(request, uncontrolled boundaries) UncontrolledBoundaries = %v, want %v", got.UncontrolledBoundaries, want)
+	wantControlled := []Boundary{BoundaryExternalHTTP}
+	if !slices.Equal(got.ControlledBoundaries, wantControlled) {
+		t.Errorf("Capture(request, boundary options) ControlledBoundaries = %v, want %v", got.ControlledBoundaries, wantControlled)
+	}
+	wantUncontrolled := []Boundary{BoundaryClock, BoundaryDatabaseState}
+	if !slices.Equal(got.UncontrolledBoundaries, wantUncontrolled) {
+		t.Errorf("Capture(request, boundary options) UncontrolledBoundaries = %v, want %v", got.UncontrolledBoundaries, wantUncontrolled)
+	}
+}
+
+func TestCaptureRejectsInvalidBoundaryMetadata(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+
+	_, err := Capture(request,
+		WithControlledBoundaries(BoundaryClock),
+		WithUncontrolledBoundaries(BoundaryClock),
+	)
+	if err == nil {
+		t.Fatalf("Capture(request, conflicting boundary options) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "marks clock boundary as both controlled and uncontrolled") {
+		t.Errorf("Capture(request, conflicting boundary options) error = %v, want conflict context", err)
+	}
+}
+
+func TestDecodeSnapshotRejectsUnknownFields(t *testing.T) {
+	input := `{
+		"version": 1,
+		"method": "GET",
+		"path": "/",
+		"uncontrolled_boundary": ["clock"]
+	}`
+
+	_, err := DecodeSnapshot(strings.NewReader(input))
+	if err == nil {
+		t.Fatalf("DecodeSnapshot(snapshot with unknown field) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), `unknown field "uncontrolled_boundary"`) {
+		t.Errorf("DecodeSnapshot(snapshot with unknown field) error = %v, want unknown field context", err)
+	}
+}
+
+func TestDecodeSnapshotRejectsTrailingValues(t *testing.T) {
+	input := `{"version":1,"method":"GET","path":"/"} {}`
+
+	_, err := DecodeSnapshot(strings.NewReader(input))
+	if err == nil {
+		t.Fatalf("DecodeSnapshot(snapshot with trailing value) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "must contain one JSON value") {
+		t.Errorf("DecodeSnapshot(snapshot with trailing value) error = %v, want single value context", err)
+	}
+}
+
+func TestRequireDeterministicAcceptsControlledBoundaries(t *testing.T) {
+	snapshot := Snapshot{
+		ControlledBoundaries: []Boundary{
+			BoundaryClock,
+			BoundaryDatabaseState,
+			BoundaryClock,
+		},
+	}
+
+	if err := RequireDeterministic(snapshot); err != nil {
+		t.Fatalf("RequireDeterministic(snapshot with controlled boundaries) error = %v, want nil", err)
+	}
+}
+
+func TestRequireDeterministicRejectsUncontrolledBoundaries(t *testing.T) {
+	snapshot := Snapshot{
+		UncontrolledBoundaries: []Boundary{
+			BoundaryClock,
+			BoundaryDatabaseState,
+		},
+	}
+
+	err := RequireDeterministic(snapshot)
+	if err == nil {
+		t.Fatalf("RequireDeterministic(snapshot with uncontrolled boundaries) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "records uncontrolled boundaries (clock, database_state)") {
+		t.Errorf("RequireDeterministic(snapshot with uncontrolled boundaries) error = %v, want boundary list", err)
+	}
+}
+
+func TestValidateBoundariesRejectsUnknownBoundaries(t *testing.T) {
+	snapshot := Snapshot{
+		ControlledBoundaries: []Boundary{
+			Boundary("network"),
+		},
+	}
+
+	err := ValidateBoundaries(snapshot)
+	if err == nil {
+		t.Fatalf("ValidateBoundaries(snapshot with unknown boundary) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), `unknown controlled boundary "network"`) {
+		t.Errorf("ValidateBoundaries(snapshot with unknown boundary) error = %v, want unknown boundary context", err)
+	}
+}
+
+func TestValidateBoundariesRejectsBoundaryConflicts(t *testing.T) {
+	snapshot := Snapshot{
+		ControlledBoundaries: []Boundary{
+			BoundaryClock,
+		},
+		UncontrolledBoundaries: []Boundary{
+			BoundaryClock,
+		},
+	}
+
+	err := ValidateBoundaries(snapshot)
+	if err == nil {
+		t.Fatalf("ValidateBoundaries(snapshot with boundary conflict) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "marks clock boundary as both controlled and uncontrolled") {
+		t.Errorf("ValidateBoundaries(snapshot with boundary conflict) error = %v, want conflict context", err)
 	}
 }
 

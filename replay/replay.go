@@ -45,6 +45,7 @@ type Snapshot struct {
 	ApplicationVersion     string              `json:"application_version,omitempty"`
 	Environment            string              `json:"environment,omitempty"`
 	FeatureFlags           map[string]string   `json:"feature_flags,omitempty"`
+	ControlledBoundaries   []Boundary          `json:"controlled_boundaries,omitempty"`
 	UncontrolledBoundaries []Boundary          `json:"uncontrolled_boundaries,omitempty"`
 	Principal              *PrincipalRef       `json:"principal,omitempty"`
 	CapturedAt             time.Time           `json:"captured_at"`
@@ -72,6 +73,16 @@ const (
 	BoundaryFeatureFlags  Boundary = "feature_flags"
 )
 
+var knownBoundaries = []Boundary{
+	BoundaryClock,
+	BoundaryRandomID,
+	BoundaryExternalHTTP,
+	BoundaryEmailDelivery,
+	BoundaryFileWrites,
+	BoundaryDatabaseState,
+	BoundaryFeatureFlags,
+}
+
 // ExpectedResponse captures the response assertions used by generated replay tests.
 type ExpectedResponse struct {
 	Status      int                 `json:"status"`
@@ -91,6 +102,7 @@ type captureOptions struct {
 	applicationVersion string
 	environment        string
 	featureFlags       map[string]string
+	controlled         []Boundary
 	uncontrolled       []Boundary
 	principal          *PrincipalRef
 }
@@ -150,6 +162,13 @@ func WithFeatureFlags(flags map[string]string) Option {
 	}
 }
 
+// WithControlledBoundaries marks dependencies made deterministic for replay.
+func WithControlledBoundaries(boundaries ...Boundary) Option {
+	return func(opts *captureOptions) {
+		opts.controlled = append(opts.controlled, boundaries...)
+	}
+}
+
 // WithUncontrolledBoundaries marks dependencies that may make replay nondeterministic.
 func WithUncontrolledBoundaries(boundaries ...Boundary) Option {
 	return func(opts *captureOptions) {
@@ -199,10 +218,14 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 		ApplicationVersion:     cfg.applicationVersion,
 		Environment:            cfg.environment,
 		FeatureFlags:           scrubFeatureFlags(cfg.redactor, cfg.featureFlags),
+		ControlledBoundaries:   NormalizeBoundaries(cfg.controlled...),
 		UncontrolledBoundaries: NormalizeBoundaries(cfg.uncontrolled...),
 		Principal:              scrubPrincipal(cfg.redactor, cfg.principal),
 		CapturedAt:             cfg.now().UTC(),
 		BodyOmitted:            true,
+	}
+	if err := ValidateBoundaries(snapshot); err != nil {
+		return Snapshot{}, err
 	}
 	if cfg.bodyLimit >= 0 {
 		body, omitted, err := captureBody(r, cfg.bodyLimit)
@@ -223,6 +246,51 @@ func Capture(r *http.Request, opts ...Option) (Snapshot, error) {
 		snapshot.BodyOmitted = omitted
 	}
 	return snapshot, nil
+}
+
+// DecodeSnapshot decodes one replay snapshot and rejects unknown fields.
+func DecodeSnapshot(r io.Reader) (Snapshot, error) {
+	if r == nil {
+		return Snapshot{}, fmt.Errorf("replay snapshot reader is required")
+	}
+
+	decoder := json.NewDecoder(r)
+	decoder.DisallowUnknownFields()
+
+	var snapshot Snapshot
+	if err := decoder.Decode(&snapshot); err != nil {
+		return Snapshot{}, err
+	}
+
+	var extra json.RawMessage
+	err := decoder.Decode(&extra)
+	if err == nil {
+		return Snapshot{}, fmt.Errorf("replay snapshot must contain one JSON value")
+	}
+	if err != io.EOF {
+		return Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
+// ValidateBoundaries verifies that replay boundary metadata uses known names
+// and does not mark a boundary as both controlled and uncontrolled.
+func ValidateBoundaries(snapshot Snapshot) error {
+	_, err := snapshotBoundaries(snapshot)
+	return err
+}
+
+// RequireDeterministic verifies that a snapshot can be used as a stable
+// regression test.
+func RequireDeterministic(snapshot Snapshot) error {
+	boundaries, err := snapshotBoundaries(snapshot)
+	if err != nil {
+		return err
+	}
+	if len(boundaries.uncontrolled) > 0 {
+		return fmt.Errorf("replay snapshot records uncontrolled boundaries (%s); make those boundaries deterministic before using it as a regression test", boundaryList(boundaries.uncontrolled))
+	}
+	return nil
 }
 
 // NewRequest builds a test request from snapshot.
@@ -468,6 +536,50 @@ func scrubPrincipal(redactor *scrub.Redactor, ref *PrincipalRef) *PrincipalRef {
 		out.ID = fmt.Sprint(redactor.Any(out.Kind, out.ID))
 	}
 	return &out
+}
+
+type normalizedSnapshotBoundaries struct {
+	uncontrolled []Boundary
+}
+
+func snapshotBoundaries(snapshot Snapshot) (normalizedSnapshotBoundaries, error) {
+	controlled := NormalizeBoundaries(snapshot.ControlledBoundaries...)
+	uncontrolled := NormalizeBoundaries(snapshot.UncontrolledBoundaries...)
+	if err := validateKnownBoundaries("controlled", controlled); err != nil {
+		return normalizedSnapshotBoundaries{}, err
+	}
+	if err := validateKnownBoundaries("uncontrolled", uncontrolled); err != nil {
+		return normalizedSnapshotBoundaries{}, err
+	}
+
+	controlledSet := make(map[Boundary]bool, len(controlled))
+	for _, boundary := range controlled {
+		controlledSet[boundary] = true
+	}
+	for _, boundary := range uncontrolled {
+		if controlledSet[boundary] {
+			return normalizedSnapshotBoundaries{}, fmt.Errorf("replay snapshot marks %s boundary as both controlled and uncontrolled", boundary)
+		}
+	}
+
+	return normalizedSnapshotBoundaries{uncontrolled: uncontrolled}, nil
+}
+
+func validateKnownBoundaries(kind string, boundaries []Boundary) error {
+	for _, boundary := range boundaries {
+		if !slices.Contains(knownBoundaries, boundary) {
+			return fmt.Errorf("replay snapshot records unknown %s boundary %q; expected one of %s", kind, boundary, boundaryList(knownBoundaries))
+		}
+	}
+	return nil
+}
+
+func boundaryList(boundaries []Boundary) string {
+	values := make([]string, 0, len(boundaries))
+	for _, boundary := range boundaries {
+		values = append(values, string(boundary))
+	}
+	return strings.Join(values, ", ")
 }
 
 // NormalizeBoundaries trims empty boundary names and preserves first-seen order.
