@@ -31,8 +31,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Test
-        run: go test ./...
+      - name: Check formatting
+        run: |
+          files="$(gofmt -l .)"
+          test -z "$files" || { printf '%s\n' "$files"; exit 1; }
+
+      - name: Check module tidiness
+        run: go mod tidy -diff
 
       - name: Vet
         run: go vet ./...
+
+      - name: Test
+        run: go test ./...
