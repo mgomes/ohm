@@ -75,7 +75,6 @@ Create a resource with SQL, migration, handler, and route wiring:
 
 ```sh
 ohm generate resource Posts title:string body:text
-just generate
 just check
 ```
 
@@ -88,6 +87,8 @@ ohm generate migration create_posts
 
 Generators only add files and route wiring. The generated code is normal app
 code.
+
+Use `just generate` when you only want to refresh templ and sqlc output.
 
 ## Useful app commands
 
