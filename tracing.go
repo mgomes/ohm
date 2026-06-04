@@ -28,11 +28,13 @@ const tracerName = "github.com/mgomes/ohm"
 // the handler returns.
 func Tracing() Middleware {
 	tracer := otel.Tracer(tracerName)
-	propagator := otel.GetTextMapPropagator()
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+			// Fetch the propagator per request rather than caching it: the
+			// middleware is built during app construction, before the app
+			// installs a propagator, so a cached value could miss it.
+			ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 			ctx, span := tracer.Start(ctx, r.Method,
 				trace.WithSpanKind(trace.SpanKindServer),
 				trace.WithAttributes(requestSpanAttrs(r)...),

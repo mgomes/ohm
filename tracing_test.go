@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -89,6 +90,34 @@ func TestTracingLeavesClientErrorsUnmarked(t *testing.T) {
 	span := recorder.Ended()[0]
 	if span.Status().Code == codes.Error {
 		t.Errorf("span status code = %v, want it to remain unset for a 404", span.Status().Code)
+	}
+}
+
+func TestTracingExtractsPropagatorInstalledAfterConstruction(t *testing.T) {
+	recorder := newSpanRecorder(t)
+
+	// Build the middleware before the propagator is installed, mirroring app
+	// construction running before otel.Setup at process startup.
+	app := New()
+	app.Use(Tracing())
+	app.Get("/x", func(req *Request) error {
+		req.PlainText(http.StatusOK, "ok")
+		return nil
+	})
+
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+
+	const upstreamTraceID = "0102030405060708090a0b0c0d0e0f10"
+	request := httptest.NewRequest(http.MethodGet, "/x", nil)
+	request.Header.Set("traceparent", "00-"+upstreamTraceID+"-0102030405060708-01")
+
+	app.ServeHTTP(httptest.NewRecorder(), request)
+
+	span := recorder.Ended()[0]
+	if got := span.SpanContext().TraceID().String(); got != upstreamTraceID {
+		t.Errorf("server span trace id = %q, want %q (joined upstream trace)", got, upstreamTraceID)
 	}
 }
 
