@@ -21,6 +21,7 @@ type serverConfig struct {
 	addr            string
 	shutdownTimeout time.Duration
 	runner          ServerRunner
+	shutdownHooks   []func(context.Context) error
 }
 
 // ServerOption configures ServerCommand.
@@ -49,6 +50,18 @@ func WithServerRunner(runner ServerRunner) ServerOption {
 	return func(cfg *serverConfig) {
 		if runner != nil {
 			cfg.runner = runner
+		}
+	}
+}
+
+// WithShutdownHook registers a function run after the server stops serving,
+// during graceful shutdown. Hooks run in reverse registration order, each
+// bounded by the shutdown timeout, and are the seam for flushing telemetry such
+// as OpenTelemetry providers before the process exits.
+func WithShutdownHook(hook func(context.Context) error) ServerOption {
+	return func(cfg *serverConfig) {
+		if hook != nil {
+			cfg.shutdownHooks = append(cfg.shutdownHooks, hook)
 		}
 	}
 }
@@ -96,9 +109,30 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 				Handler:           handler,
 				ReadHeaderTimeout: 5 * time.Second,
 			}
-			return cfg.runner(ctx, server, cfg.shutdownTimeout)
+			serveErr := cfg.runner(ctx, server, cfg.shutdownTimeout)
+			return errors.Join(serveErr, runShutdownHooks(cfg.shutdownHooks, cfg.shutdownTimeout))
 		},
 	}
+}
+
+func runShutdownHooks(hooks []func(context.Context) error, timeout time.Duration) error {
+	if len(hooks) == 0 {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = defaultShutdownTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var errs []error
+	for i := len(hooks) - 1; i >= 0; i-- {
+		if err := hooks[i](ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // RunHTTPServer runs server until it stops or ctx is canceled.
