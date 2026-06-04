@@ -25,7 +25,7 @@ func Span[T any](ctx context.Context, name string, fn func(context.Context) (T, 
 	defer span.End()
 
 	result, err := fn(ctx)
-	if err != nil {
+	if err != nil && span.IsRecording() {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}

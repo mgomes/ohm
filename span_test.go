@@ -5,8 +5,19 @@ import (
 	"errors"
 	"testing"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace/noop"
 )
+
+type countingError struct {
+	calls int
+}
+
+func (e *countingError) Error() string {
+	e.calls++
+	return "boom"
+}
 
 func TestSpanReturnsResultAndRecordsSpan(t *testing.T) {
 	recorder := newSpanRecorder(t)
@@ -66,6 +77,23 @@ func TestSpanPropagatesContext(t *testing.T) {
 	})
 	if !childHadParent {
 		t.Errorf("nested span did not run")
+	}
+}
+
+func TestSpanSkipsErrorFormattingWhenNotRecording(t *testing.T) {
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(noop.NewTracerProvider())
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	failure := &countingError{}
+	_, err := Span(context.Background(), "op", func(context.Context) (int, error) {
+		return 0, failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("Span error = %v, want failure", err)
+	}
+	if failure.calls != 0 {
+		t.Errorf("Error() called %d times, want 0 when the span is not recording", failure.calls)
 	}
 }
 
