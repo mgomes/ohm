@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/trace"
+	"strings"
+	"sync"
 	"time"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -40,6 +42,11 @@ type FlightRecorder struct {
 	sink      Sink
 	threshold time.Duration
 	logger    *slog.Logger
+
+	// writeMu serializes snapshots: runtime/trace.FlightRecorder.WriteTo fails
+	// when another WriteTo is in progress, so concurrent triggers must queue
+	// rather than drop a high-value snapshot.
+	writeMu sync.Mutex
 }
 
 // Sink stores captured execution-trace snapshots.
@@ -144,6 +151,9 @@ func (f *FlightRecorder) snapshot(ctx context.Context, reason string) {
 	// line and OpenTelemetry span for the same incident.
 	trace.Log(ctx, "ohm.flight", reason+" "+id)
 
+	f.writeMu.Lock()
+	defer f.writeMu.Unlock()
+
 	name := snapshotName(reason, id)
 	writer, err := f.sink.Create(name)
 	if err != nil {
@@ -202,10 +212,31 @@ func correlationID(ctx context.Context) string {
 
 func snapshotName(reason string, id string) string {
 	stamp := time.Now().UTC().Format("20060102T150405.000")
+	id = sanitizeID(id)
 	if id == "" {
 		return fmt.Sprintf("%s-%s.trace", stamp, reason)
 	}
 	return fmt.Sprintf("%s-%s-%s.trace", stamp, reason, id)
+}
+
+const maxSanitizedIDLen = 64
+
+// sanitizeID reduces id to a path-safe token. The correlation id can originate
+// from a client-controlled X-Request-ID header, so it must never reach a file
+// path verbatim; non-alphanumeric characters are replaced and the result is
+// length-capped.
+func sanitizeID(id string) string {
+	if len(id) > maxSanitizedIDLen {
+		id = id[:maxSanitizedIDLen]
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, id)
 }
 
 // DirSink writes snapshots as files under Dir, creating it as needed.

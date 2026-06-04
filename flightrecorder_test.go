@@ -3,6 +3,7 @@ package ohm
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -129,6 +130,56 @@ func TestFlightRecordingNilRecorderIsPassThrough(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if !called {
 		t.Errorf("nil recorder middleware did not call next handler")
+	}
+}
+
+func TestSnapshotNameSanitizesCorrelationID(t *testing.T) {
+	name := snapshotName("panic", "../../../../pwn/etc")
+	if strings.ContainsAny(name, "/\\") {
+		t.Errorf("snapshot name = %q, want no path separators", name)
+	}
+	if strings.Contains(name, "..") {
+		t.Errorf("snapshot name = %q, want no parent-directory tokens", name)
+	}
+}
+
+func TestFlightRecordingTraversalRequestIDStaysInSink(t *testing.T) {
+	sink := newMemSink()
+	recorder := startedRecorder(t, sink, WithSlowRequestThreshold(time.Millisecond))
+
+	handler := FlightRecording(recorder)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(5 * time.Millisecond)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/slow", nil)
+	// Simulate a client-controlled request id seeded into the context.
+	request = request.WithContext(context.WithValue(request.Context(), requestIDKey{}, "../../../../pwn"))
+
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	names := sink.names()
+	if len(names) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(names))
+	}
+	if strings.ContainsAny(names[0], "/\\") || strings.Contains(names[0], "..") {
+		t.Errorf("snapshot name = %q, want a path-safe token", names[0])
+	}
+}
+
+func TestFlightRecorderSerializesConcurrentSnapshots(t *testing.T) {
+	sink := newMemSink()
+	recorder := startedRecorder(t, sink)
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			ctx := context.WithValue(context.Background(), requestIDKey{}, fmt.Sprintf("req-%d", i))
+			recorder.snapshot(ctx, "slow")
+		})
+	}
+	wg.Wait()
+
+	if got := len(sink.names()); got != 8 {
+		t.Errorf("snapshots = %d, want 8 (none dropped by concurrent WriteTo)", got)
 	}
 }
 
