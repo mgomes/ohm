@@ -13,14 +13,23 @@ import (
 
 const defaultShutdownTimeout = 10 * time.Second
 
-// ServerRunner runs an HTTP server.
-type ServerRunner func(context.Context, *http.Server, time.Duration) error
+// ShutdownHook releases resources during graceful shutdown. Hooks run after the
+// server stops serving, within the remaining shutdown budget, and are the seam
+// for flushing telemetry such as OpenTelemetry providers before the process
+// exits.
+type ShutdownHook func(context.Context) error
+
+// ServerRunner runs an HTTP server and, once it stops, runs the shutdown hooks
+// within the shutdown budget. A runner owns the full lifecycle, so custom
+// runners are responsible for invoking the hooks they are given.
+type ServerRunner func(ctx context.Context, server *http.Server, shutdownTimeout time.Duration, hooks []ShutdownHook) error
 
 type serverConfig struct {
 	name            string
 	addr            string
 	shutdownTimeout time.Duration
 	runner          ServerRunner
+	shutdownHooks   []ShutdownHook
 }
 
 // ServerOption configures ServerCommand.
@@ -49,6 +58,17 @@ func WithServerRunner(runner ServerRunner) ServerOption {
 	return func(cfg *serverConfig) {
 		if runner != nil {
 			cfg.runner = runner
+		}
+	}
+}
+
+// WithShutdownHook registers a hook run during graceful shutdown. Hooks run in
+// reverse registration order, sharing the single shutdown budget with the
+// server drain so total shutdown stays bounded by the shutdown timeout.
+func WithShutdownHook(hook ShutdownHook) ServerOption {
+	return func(cfg *serverConfig) {
+		if hook != nil {
+			cfg.shutdownHooks = append(cfg.shutdownHooks, hook)
 		}
 	}
 }
@@ -96,13 +116,27 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 				Handler:           handler,
 				ReadHeaderTimeout: 5 * time.Second,
 			}
-			return cfg.runner(ctx, server, cfg.shutdownTimeout)
+			return cfg.runner(ctx, server, cfg.shutdownTimeout, cfg.shutdownHooks)
 		},
 	}
 }
 
-// RunHTTPServer runs server until it stops or ctx is canceled.
-func RunHTTPServer(ctx context.Context, server *http.Server, shutdownTimeout time.Duration) error {
+// runShutdownHooks runs hooks in reverse registration order within ctx, which
+// carries the shared shutdown deadline.
+func runShutdownHooks(ctx context.Context, hooks []ShutdownHook) error {
+	var errs []error
+	for i := len(hooks) - 1; i >= 0; i-- {
+		if err := hooks[i](ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// RunHTTPServer runs server until it stops or ctx is canceled, then runs the
+// shutdown hooks. The drain and the hooks share a single deadline derived from
+// shutdownTimeout, so total shutdown stays bounded by that budget.
+func RunHTTPServer(ctx context.Context, server *http.Server, shutdownTimeout time.Duration, hooks []ShutdownHook) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -123,24 +157,27 @@ func RunHTTPServer(ctx context.Context, server *http.Server, shutdownTimeout tim
 
 	select {
 	case err := <-errCh:
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
 		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+			err = nil
 		}
-		return err
+		return errors.Join(err, runShutdownHooks(shutdownCtx, hooks))
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
-		if err := server.Shutdown(shutdownCtx); err != nil {
+		serveErr := server.Shutdown(shutdownCtx)
+		if serveErr != nil {
 			if closeErr := server.Close(); closeErr != nil {
-				return fmt.Errorf("shutdown server: %w", errors.Join(err, closeErr))
+				serveErr = errors.Join(serveErr, closeErr)
 			}
-			return fmt.Errorf("shutdown server: %w", err)
+			serveErr = fmt.Errorf("shutdown server: %w", serveErr)
+		} else if drainErr := <-errCh; drainErr != nil && !errors.Is(drainErr, http.ErrServerClosed) {
+			serveErr = drainErr
 		}
-		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
+
+		return errors.Join(serveErr, runShutdownHooks(shutdownCtx, hooks))
 	}
 }
 

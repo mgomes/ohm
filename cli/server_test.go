@@ -12,7 +12,7 @@ func TestServerCommandBuildsHTTPServer(t *testing.T) {
 	handler := &testHandler{}
 	var gotAddr string
 	var gotHandler http.Handler
-	command := ServerCommand(handler, WithServerRunner(func(_ context.Context, server *http.Server, _ time.Duration) error {
+	command := ServerCommand(handler, WithServerRunner(func(_ context.Context, server *http.Server, _ time.Duration, _ []ShutdownHook) error {
 		gotAddr = server.Addr
 		gotHandler = server.Handler
 		return nil
@@ -35,7 +35,7 @@ func TestServerCommandSetsRequestBaseContext(t *testing.T) {
 
 	parent := context.WithValue(context.Background(), contextKey{}, "request")
 	ctx, cancel := context.WithCancel(parent)
-	command := ServerCommand(&testHandler{}, WithServerRunner(func(_ context.Context, server *http.Server, _ time.Duration) error {
+	command := ServerCommand(&testHandler{}, WithServerRunner(func(_ context.Context, server *http.Server, _ time.Duration, _ []ShutdownHook) error {
 		if server.BaseContext == nil {
 			t.Fatalf("ServerCommand(handler).Run(ctx, io, args) server BaseContext = nil, want non-nil")
 		}
@@ -71,9 +71,9 @@ func TestServerCommandRejectsPositionalArguments(t *testing.T) {
 }
 
 func TestRunHTTPServerRequiresServer(t *testing.T) {
-	err := RunHTTPServer(context.Background(), nil, time.Second)
+	err := RunHTTPServer(context.Background(), nil, time.Second, nil)
 	if err == nil {
-		t.Fatalf("RunHTTPServer(ctx, nil, timeout) error = nil, want non-nil")
+		t.Fatalf("RunHTTPServer(ctx, nil, timeout, nil) error = nil, want non-nil")
 	}
 }
 
@@ -84,7 +84,7 @@ func TestRunHTTPServerSetsRequestBaseContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(parent)
 	server := &http.Server{Addr: "127.0.0.1:invalid"}
 
-	err := RunHTTPServer(ctx, server, time.Second)
+	err := RunHTTPServer(ctx, server, time.Second, nil)
 	cancel()
 	if err == nil {
 		t.Fatalf("RunHTTPServer(ctx, server, timeout) error = nil, want non-nil")
