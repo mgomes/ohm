@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel"
@@ -90,6 +91,35 @@ func TestTracingLeavesClientErrorsUnmarked(t *testing.T) {
 	span := recorder.Ended()[0]
 	if span.Status().Code == codes.Error {
 		t.Errorf("span status code = %v, want it to remain unset for a 404", span.Status().Code)
+	}
+}
+
+func TestTracingDoesNotLeakRawErrorText(t *testing.T) {
+	recorder := newSpanRecorder(t)
+
+	const secret = "dsn=postgres://user:s3cr3t@host/db"
+	app := New()
+	app.Use(Tracing())
+	app.Get("/leak", func(*Request) error {
+		// 5xx HTTPError with no public message, wrapping a sensitive error.
+		return NewHTTPError(http.StatusInternalServerError, "", errors.New(secret))
+	})
+
+	app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/leak", nil))
+
+	span := recorder.Ended()[0]
+	if strings.Contains(span.Status().Description, "s3cr3t") {
+		t.Errorf("span status description leaked raw error: %q", span.Status().Description)
+	}
+	for _, event := range span.Events() {
+		for _, attr := range event.Attributes {
+			if strings.Contains(attr.Value.AsString(), "s3cr3t") {
+				t.Errorf("span event %q leaked raw error: %q", event.Name, attr.Value.AsString())
+			}
+		}
+	}
+	if span.Status().Code != codes.Error {
+		t.Errorf("span status = %v, want %v for a 5xx", span.Status().Code, codes.Error)
 	}
 }
 

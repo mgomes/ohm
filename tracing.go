@@ -2,6 +2,7 @@ package ohm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -75,19 +76,25 @@ func recordResponseSpan(span trace.Span, r *http.Request, status int) {
 	}
 }
 
-// recordHandlerError records err on the active span for ctx and marks the span
-// failed for server errors. Client (4xx) errors are recorded without setting
-// error status, matching OpenTelemetry server-span conventions. It is a no-op
-// when no span is recording, so handlers never reference tracing directly.
+// recordHandlerError marks the active span failed for server (5xx) errors.
+// Client (4xx) errors are left unmarked, matching OpenTelemetry server-span
+// conventions. Only the public response message is recorded, never the raw
+// error: the raw text may hold sensitive data and is handled by scrubbed
+// logging, not sent to the tracing backend (consistent with ADR 0004). It is a
+// no-op when no span is recording, so handlers never reference tracing directly.
 func recordHandlerError(ctx context.Context, err error) {
 	span := trace.SpanFromContext(ctx)
 	if !span.IsRecording() {
 		return
 	}
-	span.RecordError(err)
-	if status, _ := ErrorResponse(err); status >= http.StatusInternalServerError {
-		span.SetStatus(codes.Error, err.Error())
+	status, message := ErrorResponse(err)
+	if status < http.StatusInternalServerError {
+		return
 	}
+	span.RecordError(errors.New(message), trace.WithAttributes(
+		attribute.String("error.type", fmt.Sprintf("%T", err)),
+	))
+	span.SetStatus(codes.Error, message)
 }
 
 // recordPanicSpan marks the active span as failed for a recovered panic. Only
