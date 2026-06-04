@@ -35,9 +35,9 @@ func New(opts ...Option) *ohm.App {
 		opt(&cfg)
 	}
 
-	logger := slog.New(scrub.NewHandler(slog.NewJSONHandler(os.Stderr, nil)))
+	logger := slog.New(ohm.TraceLogHandler(scrub.NewHandler(slog.NewJSONHandler(os.Stderr, nil))))
 	application := ohm.New(ohm.WithErrorHandler(handleError))
-	application.Use(ohm.RequestLogger(logger), ohm.Recoverer(logger))
+	application.Use(ohm.Tracing(), ohm.RequestLogger(logger), ohm.Recoverer(logger))
 	application.Static("/assets/*", cfg.staticRoot)
 	application.NotFound(notFound)
 	application.MethodNotAllowed(methodNotAllowed)
