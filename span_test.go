@@ -1,0 +1,136 @@
+package ohm
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace/noop"
+)
+
+type countingError struct {
+	calls int
+}
+
+func (e *countingError) Error() string {
+	e.calls++
+	return "boom"
+}
+
+func TestSpanReturnsResultAndRecordsSpan(t *testing.T) {
+	recorder := newSpanRecorder(t)
+
+	got, err := Span(context.Background(), "load user", func(context.Context) (string, error) {
+		return "ada", nil
+	})
+	if err != nil {
+		t.Fatalf("Span error = %v, want nil", err)
+	}
+	if got != "ada" {
+		t.Errorf("Span result = %q, want %q", got, "ada")
+	}
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("recorded spans = %d, want 1", len(spans))
+	}
+	if spans[0].Name() != "load user" {
+		t.Errorf("span name = %q, want %q", spans[0].Name(), "load user")
+	}
+	if spans[0].Status().Code != codes.Unset {
+		t.Errorf("span status = %v, want unset on success", spans[0].Status().Code)
+	}
+}
+
+func TestSpanRecordsError(t *testing.T) {
+	recorder := newSpanRecorder(t)
+	wantErr := errors.New("connection string s3cr3t")
+
+	_, err := Span(context.Background(), "charge", func(context.Context) (int, error) {
+		return 0, wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Span error = %v, want wantErr", err)
+	}
+
+	span := recorder.Ended()[0]
+	if span.Status().Code != codes.Error {
+		t.Errorf("span status = %v, want %v", span.Status().Code, codes.Error)
+	}
+	if got := stringAttr(span.Attributes(), "error.type"); got != "*errors.errorString" {
+		t.Errorf("error.type = %q, want %q", got, "*errors.errorString")
+	}
+
+	// The raw error text must never reach the tracing backend.
+	if strings.Contains(span.Status().Description, "s3cr3t") {
+		t.Errorf("span status description leaked raw error: %q", span.Status().Description)
+	}
+	for _, attr := range span.Attributes() {
+		if strings.Contains(attr.Value.AsString(), "s3cr3t") {
+			t.Errorf("span attribute %q leaked raw error", attr.Key)
+		}
+	}
+	for _, event := range span.Events() {
+		for _, attr := range event.Attributes {
+			if strings.Contains(attr.Value.AsString(), "s3cr3t") {
+				t.Errorf("span event %q leaked raw error", event.Name)
+			}
+		}
+	}
+}
+
+func TestSpanPropagatesContext(t *testing.T) {
+	newSpanRecorder(t)
+
+	var childHadParent bool
+	_, _ = Span(context.Background(), "parent", func(ctx context.Context) (struct{}, error) {
+		_, _ = Span(ctx, "child", func(ctx context.Context) (struct{}, error) {
+			childHadParent = true
+			return struct{}{}, nil
+		})
+		return struct{}{}, nil
+	})
+	if !childHadParent {
+		t.Errorf("nested span did not run")
+	}
+}
+
+func TestSpanSkipsErrorFormattingWhenNotRecording(t *testing.T) {
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(noop.NewTracerProvider())
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	failure := &countingError{}
+	_, err := Span(context.Background(), "op", func(context.Context) (int, error) {
+		return 0, failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("Span error = %v, want failure", err)
+	}
+	if failure.calls != 0 {
+		t.Errorf("Error() called %d times, want 0 when the span is not recording", failure.calls)
+	}
+}
+
+func TestDoRecordsError(t *testing.T) {
+	recorder := newSpanRecorder(t)
+	wantErr := errors.New("send failed")
+
+	err := Do(context.Background(), "send email", func(context.Context) error {
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Do error = %v, want wantErr", err)
+	}
+
+	span := recorder.Ended()[0]
+	if span.Name() != "send email" {
+		t.Errorf("span name = %q, want %q", span.Name(), "send email")
+	}
+	if span.Status().Code != codes.Error {
+		t.Errorf("span status = %v, want %v", span.Status().Code, codes.Error)
+	}
+}
