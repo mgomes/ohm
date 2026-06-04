@@ -11,6 +11,7 @@ import (
 	"runtime/trace"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -47,6 +48,10 @@ type FlightRecorder struct {
 	// when another WriteTo is in progress, so concurrent triggers must queue
 	// rather than drop a high-value snapshot.
 	writeMu sync.Mutex
+
+	// seq makes snapshot filenames unique so simultaneous triggers sharing a
+	// reason and correlation id cannot overwrite each other's artifact.
+	seq atomic.Uint64
 }
 
 // Sink stores captured execution-trace snapshots.
@@ -154,7 +159,7 @@ func (f *FlightRecorder) snapshot(ctx context.Context, reason string) {
 	f.writeMu.Lock()
 	defer f.writeMu.Unlock()
 
-	name := snapshotName(reason, id)
+	name := snapshotName(reason, id, f.seq.Add(1))
 	writer, err := f.sink.Create(name)
 	if err != nil {
 		f.logger.LogAttrs(ctx, slog.LevelError, "flight snapshot failed",
@@ -186,7 +191,11 @@ func FlightRecording(recorder *FlightRecorder) Middleware {
 			start := time.Now()
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					recorder.snapshot(r.Context(), "panic")
+					// Mirror Recoverer: http.ErrAbortHandler is an intentional
+					// abort, not a fault, so do not snapshot it.
+					if recovered != http.ErrAbortHandler {
+						recorder.snapshot(r.Context(), "panic")
+					}
 					panic(recovered)
 				}
 				if recorder.threshold > 0 && time.Since(start) >= recorder.threshold {
@@ -210,13 +219,13 @@ func correlationID(ctx context.Context) string {
 	return ""
 }
 
-func snapshotName(reason string, id string) string {
+func snapshotName(reason string, id string, seq uint64) string {
 	stamp := time.Now().UTC().Format("20060102T150405.000")
 	id = sanitizeID(id)
 	if id == "" {
-		return fmt.Sprintf("%s-%s.trace", stamp, reason)
+		return fmt.Sprintf("%s-%s-%d.trace", stamp, reason, seq)
 	}
-	return fmt.Sprintf("%s-%s-%s.trace", stamp, reason, id)
+	return fmt.Sprintf("%s-%s-%s-%d.trace", stamp, reason, id, seq)
 }
 
 const maxSanitizedIDLen = 64

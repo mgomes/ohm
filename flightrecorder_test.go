@@ -3,7 +3,6 @@ package ohm
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -134,12 +133,42 @@ func TestFlightRecordingNilRecorderIsPassThrough(t *testing.T) {
 }
 
 func TestSnapshotNameSanitizesCorrelationID(t *testing.T) {
-	name := snapshotName("panic", "../../../../pwn/etc")
+	name := snapshotName("panic", "../../../../pwn/etc", 1)
 	if strings.ContainsAny(name, "/\\") {
 		t.Errorf("snapshot name = %q, want no path separators", name)
 	}
 	if strings.Contains(name, "..") {
 		t.Errorf("snapshot name = %q, want no parent-directory tokens", name)
+	}
+}
+
+func TestSnapshotNameUniquePerSequence(t *testing.T) {
+	first := snapshotName("slow", "req-1", 1)
+	second := snapshotName("slow", "req-1", 2)
+	if first == second {
+		t.Errorf("snapshot names collided: %q == %q", first, second)
+	}
+}
+
+func TestFlightRecordingSkipsAbortHandlerPanic(t *testing.T) {
+	sink := newMemSink()
+	recorder := startedRecorder(t, sink)
+
+	handler := FlightRecording(recorder)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != http.ErrAbortHandler {
+				t.Errorf("recovered = %v, want http.ErrAbortHandler re-panicked", recovered)
+			}
+		}()
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/abort", nil))
+	}()
+
+	if names := sink.names(); len(names) != 0 {
+		t.Errorf("snapshots = %v, want none for an intentional abort", names)
 	}
 }
 
@@ -169,17 +198,19 @@ func TestFlightRecorderSerializesConcurrentSnapshots(t *testing.T) {
 	sink := newMemSink()
 	recorder := startedRecorder(t, sink)
 
+	// Same reason and correlation id for every trigger: snapshots must neither
+	// fail on a concurrent WriteTo nor overwrite each other's filename.
+	ctx := context.WithValue(context.Background(), requestIDKey{}, "req-shared")
 	var wg sync.WaitGroup
-	for i := range 8 {
+	for range 8 {
 		wg.Go(func() {
-			ctx := context.WithValue(context.Background(), requestIDKey{}, fmt.Sprintf("req-%d", i))
 			recorder.snapshot(ctx, "slow")
 		})
 	}
 	wg.Wait()
 
 	if got := len(sink.names()); got != 8 {
-		t.Errorf("snapshots = %d, want 8 (none dropped by concurrent WriteTo)", got)
+		t.Errorf("snapshots = %d, want 8 (none dropped or overwritten)", got)
 	}
 }
 
