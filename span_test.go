@@ -3,6 +3,7 @@ package ohm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel"
@@ -46,7 +47,7 @@ func TestSpanReturnsResultAndRecordsSpan(t *testing.T) {
 
 func TestSpanRecordsError(t *testing.T) {
 	recorder := newSpanRecorder(t)
-	wantErr := errors.New("boom")
+	wantErr := errors.New("connection string s3cr3t")
 
 	_, err := Span(context.Background(), "charge", func(context.Context) (int, error) {
 		return 0, wantErr
@@ -59,8 +60,25 @@ func TestSpanRecordsError(t *testing.T) {
 	if span.Status().Code != codes.Error {
 		t.Errorf("span status = %v, want %v", span.Status().Code, codes.Error)
 	}
-	if len(span.Events()) == 0 {
-		t.Errorf("span events = 0, want a recorded error event")
+	if got := stringAttr(span.Attributes(), "error.type"); got != "*errors.errorString" {
+		t.Errorf("error.type = %q, want %q", got, "*errors.errorString")
+	}
+
+	// The raw error text must never reach the tracing backend.
+	if strings.Contains(span.Status().Description, "s3cr3t") {
+		t.Errorf("span status description leaked raw error: %q", span.Status().Description)
+	}
+	for _, attr := range span.Attributes() {
+		if strings.Contains(attr.Value.AsString(), "s3cr3t") {
+			t.Errorf("span attribute %q leaked raw error", attr.Key)
+		}
+	}
+	for _, event := range span.Events() {
+		for _, attr := range event.Attributes {
+			if strings.Contains(attr.Value.AsString(), "s3cr3t") {
+				t.Errorf("span event %q leaked raw error", event.Name)
+			}
+		}
 	}
 }
 
