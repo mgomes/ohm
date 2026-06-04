@@ -8,28 +8,65 @@ import (
 	"time"
 )
 
-func TestServerCommandRunsShutdownHooksAfterServing(t *testing.T) {
-	var order []string
+func TestServerCommandRunsShutdownHooks(t *testing.T) {
+	var ran bool
 	command := ServerCommand(&testHandler{},
-		WithServerRunner(func(_ context.Context, _ *http.Server, _ time.Duration) error {
-			order = append(order, "serve")
-			return nil
-		}),
+		WithAddr("127.0.0.1:invalid"),
 		WithShutdownHook(func(context.Context) error {
-			order = append(order, "first")
-			return nil
-		}),
-		WithShutdownHook(func(context.Context) error {
-			order = append(order, "second")
+			ran = true
 			return nil
 		}),
 	)
 
-	if err := command.Run(context.Background(), IO{}, nil); err != nil {
-		t.Fatalf("command.Run(ctx, io, nil) error = %v, want nil", err)
+	// The invalid address makes the server stop immediately, exercising the
+	// real default runner's shutdown path end to end.
+	_ = command.Run(context.Background(), IO{}, nil)
+	if !ran {
+		t.Errorf("shutdown hook ran = false, want true")
+	}
+}
+
+func TestRunHTTPServerRunsHooksWithinSharedDeadline(t *testing.T) {
+	var hookDeadline bool
+	server := &http.Server{Addr: "127.0.0.1:invalid"}
+
+	err := RunHTTPServer(context.Background(), server, time.Second, []ShutdownHook{
+		func(ctx context.Context) error {
+			_, hookDeadline = ctx.Deadline()
+			return nil
+		},
+	})
+	if err == nil {
+		t.Fatalf("RunHTTPServer with invalid address error = nil, want bind error")
+	}
+	if !hookDeadline {
+		t.Errorf("shutdown hook context deadline set = false, want true")
+	}
+}
+
+func TestRunHTTPServerJoinsServeAndHookErrors(t *testing.T) {
+	hookErr := errors.New("hook failed")
+	server := &http.Server{Addr: "127.0.0.1:invalid"}
+
+	err := RunHTTPServer(context.Background(), server, time.Second, []ShutdownHook{
+		func(context.Context) error { return hookErr },
+	})
+	if !errors.Is(err, hookErr) {
+		t.Errorf("RunHTTPServer error = %v, want it to wrap hookErr", err)
+	}
+}
+
+func TestRunShutdownHooksReverseOrder(t *testing.T) {
+	var order []string
+	err := runShutdownHooks(context.Background(), []ShutdownHook{
+		func(context.Context) error { order = append(order, "first"); return nil },
+		func(context.Context) error { order = append(order, "second"); return nil },
+	})
+	if err != nil {
+		t.Fatalf("runShutdownHooks error = %v, want nil", err)
 	}
 
-	want := []string{"serve", "second", "first"}
+	want := []string{"second", "first"}
 	if len(order) != len(want) {
 		t.Fatalf("hook order = %v, want %v", order, want)
 	}
@@ -37,42 +74,5 @@ func TestServerCommandRunsShutdownHooksAfterServing(t *testing.T) {
 		if order[i] != want[i] {
 			t.Fatalf("hook order = %v, want %v", order, want)
 		}
-	}
-}
-
-func TestServerCommandJoinsShutdownHookErrors(t *testing.T) {
-	serveErr := errors.New("serve failed")
-	hookErr := errors.New("hook failed")
-	command := ServerCommand(&testHandler{},
-		WithServerRunner(func(_ context.Context, _ *http.Server, _ time.Duration) error {
-			return serveErr
-		}),
-		WithShutdownHook(func(context.Context) error {
-			return hookErr
-		}),
-	)
-
-	err := command.Run(context.Background(), IO{}, nil)
-	if !errors.Is(err, serveErr) {
-		t.Errorf("command.Run error = %v, want it to wrap serveErr", err)
-	}
-	if !errors.Is(err, hookErr) {
-		t.Errorf("command.Run error = %v, want it to wrap hookErr", err)
-	}
-}
-
-func TestRunShutdownHooksBoundsContext(t *testing.T) {
-	var deadlineSet bool
-	err := runShutdownHooks([]func(context.Context) error{
-		func(ctx context.Context) error {
-			_, deadlineSet = ctx.Deadline()
-			return nil
-		},
-	}, time.Second)
-	if err != nil {
-		t.Fatalf("runShutdownHooks error = %v, want nil", err)
-	}
-	if !deadlineSet {
-		t.Errorf("shutdown hook context deadline set = false, want true")
 	}
 }

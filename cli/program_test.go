@@ -92,7 +92,7 @@ func TestProgramRunPrintsCommandHelpAfterCommandFlags(t *testing.T) {
 		ServerCommand(
 			http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
 			WithAddr(":8080"),
-			WithServerRunner(func(context.Context, *http.Server, time.Duration) error {
+			WithServerRunner(func(context.Context, *http.Server, time.Duration, []ShutdownHook) error {
 				t.Fatalf("server runner called for help argument")
 				return nil
 			}),
