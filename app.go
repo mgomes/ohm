@@ -218,6 +218,7 @@ func (a *App) adapt(handler Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req := newRequest(w, r)
 		if err := handler(req); err != nil {
+			recordHandlerError(r.Context(), err)
 			a.errorHandler(req, err)
 		}
 	})

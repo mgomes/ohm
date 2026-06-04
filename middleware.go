@@ -80,6 +80,7 @@ func Recoverer(logger *slog.Logger) Middleware {
 					slog.String("stack", string(debug.Stack())),
 				)
 				logger.LogAttrs(r.Context(), slog.LevelError, "panic", attrs...)
+				recordPanicSpan(r.Context(), recovered)
 
 				if committed {
 					return
