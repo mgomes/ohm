@@ -148,7 +148,7 @@ func buildResource(ctx context.Context, cfg config) (*resource.Resource, error) 
 	}
 	attrs = append(attrs, cfg.resourceAttrs...)
 
-	res, err := resource.New(ctx,
+	detected, err := resource.New(ctx,
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
 		resource.WithHost(),
@@ -157,5 +157,13 @@ func buildResource(ctx context.Context, cfg config) (*resource.Resource, error) 
 	if err != nil {
 		return nil, err
 	}
-	return res, nil
+
+	// Merge over the SDK default so the default service.name fallback survives
+	// when neither an option nor the environment provides one. Detected values
+	// take precedence on overlapping keys.
+	merged, err := resource.Merge(resource.Default(), detected)
+	if err != nil {
+		return nil, err
+	}
+	return merged, nil
 }
