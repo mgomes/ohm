@@ -68,10 +68,19 @@ Handlers receive a live span on their context without writing any code.
 ### Automatic outcome recording
 
 Because Ohm handlers return `error` and every error flows through `App.adapt`
-into the `ErrorHandler`, the framework records the returned error on the span and
-sets span status from the resolved HTTP status using the existing
-`HTTPError`/`ErrorResponse` mapping. Application code never calls
-`span.RecordError` or `span.SetStatus`.
+into the `ErrorHandler`, the framework marks the span's outcome from the resolved
+HTTP status using the existing `HTTPError`/`ErrorResponse` mapping. Application
+code never calls `span.RecordError` or `span.SetStatus`.
+
+Span status follows the OpenTelemetry HTTP server semantic conventions: only 5xx
+responses set the span status to error, while 4xx client errors (validation
+failures, not-found, and similar) leave the status unset, so ordinary client
+errors do not skew error-rate alerts.
+
+Only the safe, public response message is recorded on the span, never the raw
+error text, which may contain sensitive data. The full error remains available
+through scrubbed logging, correlated by trace id, consistent with the scrubbing
+policy (ADR 0004).
 
 ### Spans travel in context
 
