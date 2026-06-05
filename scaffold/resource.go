@@ -201,19 +201,12 @@ func readResourceDatabase(root string) (Database, error) {
 		return "", fmt.Errorf("parse sqlc config %q: %w", path, err)
 	}
 
-	for _, sql := range cfg.SQL {
-		engine := strings.TrimSpace(sql.Engine)
-		if engine == "" {
-			continue
+	for _, engine := range cfg.engines() {
+		database, ok := databaseFromSQLCEngine(engine)
+		if ok {
+			return database, nil
 		}
-		switch engine {
-		case "postgresql":
-			return DatabasePostgres, nil
-		case "sqlite":
-			return DatabaseSQLite, nil
-		default:
-			return "", fmt.Errorf("unsupported sqlc engine %q in %s", engine, path)
-		}
+		return "", fmt.Errorf("unsupported sqlc engine %q in %s", engine, path)
 	}
 	return "", fmt.Errorf("sqlc engine was not found in %s", path)
 }
@@ -222,6 +215,35 @@ type sqlcConfig struct {
 	SQL []struct {
 		Engine string `yaml:"engine"`
 	} `yaml:"sql"`
+	Packages []struct {
+		Engine string `yaml:"engine"`
+	} `yaml:"packages"`
+}
+
+func (cfg sqlcConfig) engines() []string {
+	engines := make([]string, 0, len(cfg.SQL)+len(cfg.Packages))
+	for _, sql := range cfg.SQL {
+		if engine := strings.TrimSpace(sql.Engine); engine != "" {
+			engines = append(engines, engine)
+		}
+	}
+	for _, pkg := range cfg.Packages {
+		if engine := strings.TrimSpace(pkg.Engine); engine != "" {
+			engines = append(engines, engine)
+		}
+	}
+	return engines
+}
+
+func databaseFromSQLCEngine(engine string) (Database, bool) {
+	switch engine {
+	case "postgresql":
+		return DatabasePostgres, true
+	case "sqlite":
+		return DatabaseSQLite, true
+	default:
+		return "", false
+	}
 }
 
 func ensureResourceFilesAvailable(files []resourceFile) error {
