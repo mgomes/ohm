@@ -56,7 +56,7 @@ func bindRequest(r *http.Request, v Binder) error {
 		return fmt.Errorf("binder is required")
 	}
 	if err := decodeRequest(r, v); err != nil {
-		return err
+		return fmt.Errorf("decode request: %w", err)
 	}
 	return bindValue(r, v)
 }
@@ -97,7 +97,7 @@ func renderResponse(w http.ResponseWriter, r *http.Request, v Renderer) error {
 		return fmt.Errorf("renderer is required")
 	}
 	if err := renderValue(w, r, v); err != nil {
-		return err
+		return fmt.Errorf("render response: %w", err)
 	}
 	respond(w, r, v)
 	return nil
@@ -108,7 +108,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	encoder := json.NewEncoder(&body)
 	encoder.SetEscapeHTML(true)
 	if err := encoder.Encode(v); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -145,7 +145,7 @@ func respond(w http.ResponseWriter, r *http.Request, v any) {
 func writeXML(w http.ResponseWriter, status int, v any) {
 	body, err := xml.Marshal(v)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -183,7 +183,7 @@ func renderValue(w http.ResponseWriter, r *http.Request, v Renderer) error {
 	}
 
 	if err := v.Render(w, r); err != nil {
-		return err
+		return fmt.Errorf("render %T: %w", v, err)
 	}
 	if value.Kind() != reflect.Struct {
 		return nil
@@ -196,7 +196,7 @@ func renderValue(w http.ResponseWriter, r *http.Request, v Renderer) error {
 		}
 		child := field.Interface().(Renderer)
 		if err := renderValue(w, r, child); err != nil {
-			return err
+			return fmt.Errorf("render child %T: %w", child, err)
 		}
 	}
 	return nil
@@ -211,7 +211,10 @@ func bindValue(r *http.Request, v Binder) error {
 		value = value.Elem()
 	}
 	if value.Kind() != reflect.Struct {
-		return v.Bind(r)
+		if err := v.Bind(r); err != nil {
+			return fmt.Errorf("bind %T: %w", v, err)
+		}
+		return nil
 	}
 
 	for i := range value.NumField() {
@@ -221,10 +224,13 @@ func bindValue(r *http.Request, v Binder) error {
 		}
 		child := field.Interface().(Binder)
 		if err := bindValue(r, child); err != nil {
-			return err
+			return fmt.Errorf("bind child %T: %w", child, err)
 		}
 	}
-	return v.Bind(r)
+	if err := v.Bind(r); err != nil {
+		return fmt.Errorf("bind %T: %w", v, err)
+	}
+	return nil
 }
 
 func isNil(value reflect.Value) bool {

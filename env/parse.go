@@ -17,6 +17,7 @@ type ParseError struct {
 	Message string
 }
 
+// Error returns the formatted parse location and message.
 func (e *ParseError) Error() string {
 	if e.Name != "" {
 		return fmt.Sprintf("%s:%d: %s", e.Name, e.Line, e.Message)
