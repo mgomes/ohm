@@ -17,6 +17,7 @@ type ParseError struct {
 	Message string
 }
 
+// Error returns the formatted parse location and message.
 func (e *ParseError) Error() string {
 	if e.Name != "" {
 		return fmt.Sprintf("%s:%d: %s", e.Name, e.Line, e.Message)
@@ -97,7 +98,10 @@ func parseQuotedValue(rawValue string, quote byte) (string, string, error) {
 	var builder strings.Builder
 	escaped := false
 
-	for i := 1; i < len(rawValue); i++ {
+	for i := range len(rawValue) {
+		if i == 0 {
+			continue
+		}
 		char := rawValue[i]
 		if escaped {
 			switch char {

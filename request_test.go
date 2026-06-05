@@ -149,6 +149,52 @@ func TestRouteHelpersExposeMatchedRoute(t *testing.T) {
 	}
 }
 
+func TestRequestJSONDoesNotExposeMarshalErrors(t *testing.T) {
+	app := New()
+	app.Get("/bad-json", func(req *Request) error {
+		req.JSON(http.StatusOK, map[string]any{"bad": func() {}})
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/bad-json", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusInternalServerError)
+	}
+	if got := response.Body.String(); got != http.StatusText(http.StatusInternalServerError)+"\n" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want safe internal server error", request.Method, request.URL.Path, got)
+	}
+	if strings.Contains(response.Body.String(), "unsupported type") {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want no marshal internals", request.Method, request.URL.Path, response.Body.String())
+	}
+}
+
+func TestRequestRenderXMLDoesNotExposeMarshalErrors(t *testing.T) {
+	app := New()
+	app.Get("/bad-xml", func(req *Request) error {
+		return req.Render(xmlMarshalErrorPayload{Bad: func() {}})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/bad-xml", nil)
+	request.Header.Set("Accept", "application/xml")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusInternalServerError)
+	}
+	if got := response.Body.String(); got != http.StatusText(http.StatusInternalServerError)+"\n" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want safe internal server error", request.Method, request.URL.Path, got)
+	}
+	if strings.Contains(response.Body.String(), "unsupported type") {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want no marshal internals", request.Method, request.URL.Path, response.Body.String())
+	}
+}
+
 type bindPayload struct {
 	Name  string     `json:"name"`
 	Bound bool       `json:"bound"`
@@ -191,5 +237,13 @@ type renderChild struct {
 
 func (c *renderChild) Render(http.ResponseWriter, *http.Request) error {
 	c.Message = "child"
+	return nil
+}
+
+type xmlMarshalErrorPayload struct {
+	Bad func()
+}
+
+func (p xmlMarshalErrorPayload) Render(http.ResponseWriter, *http.Request) error {
 	return nil
 }

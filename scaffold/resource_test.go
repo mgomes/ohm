@@ -238,3 +238,50 @@ func TestGenerateResourceRejectsDuplicateOrReservedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestReadResourceDatabaseParsesSQLCConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sqlc.yaml")
+	body := []byte(`version: "2"
+sql:
+  - schema: "ignored.sql"
+  - schema: "schema.sql"
+    queries: "queries.sql"
+    engine: "sqlite"
+`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", path, err)
+	}
+
+	got, err := readResourceDatabase(dir)
+	if err != nil {
+		t.Fatalf("readResourceDatabase(%q) error = %v, want nil", dir, err)
+	}
+	if got != DatabaseSQLite {
+		t.Errorf("readResourceDatabase(%q) = %q, want %q", dir, got, DatabaseSQLite)
+	}
+}
+
+func TestReadResourceDatabaseParsesSQLCV1Config(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sqlc.yaml")
+	body := []byte(`version: "1"
+packages:
+  - name: "db"
+    path: "internal/db"
+    schema: "schema.sql"
+    queries: "queries.sql"
+    engine: "postgresql"
+`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", path, err)
+	}
+
+	got, err := readResourceDatabase(dir)
+	if err != nil {
+		t.Fatalf("readResourceDatabase(%q) error = %v, want nil", dir, err)
+	}
+	if got != DatabasePostgres {
+		t.Errorf("readResourceDatabase(%q) = %q, want %q", dir, got, DatabasePostgres)
+	}
+}

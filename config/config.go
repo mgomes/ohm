@@ -85,7 +85,8 @@ func Decode[T any](lookup LookupFunc) (T, error) {
 		lookup = os.LookupEnv
 	}
 	if err := decodeStruct(reflect.ValueOf(&cfg).Elem(), lookup, ""); err != nil {
-		return cfg, err
+		var zero T
+		return zero, err
 	}
 	return cfg, nil
 }
@@ -147,10 +148,10 @@ func layeredLookup(lookups ...LookupFunc) LookupFunc {
 
 func decodeStruct(value reflect.Value, lookup LookupFunc, prefix string) error {
 	if value.Kind() != reflect.Struct {
-		return newError(problem{Message: "target must be a struct"})
+		return newError(Problem{Message: "target must be a struct"})
 	}
 
-	var problems []problem
+	var problems []Problem
 	valueType := value.Type()
 	for i := range value.NumField() {
 		field := valueType.Field(i)
@@ -184,13 +185,12 @@ func decodeStruct(value reflect.Value, lookup LookupFunc, prefix string) error {
 
 		raw, found := lookup(key)
 		if !found {
-			raw = field.Tag.Get("default")
-			found = raw != ""
+			raw, found = field.Tag.Lookup("default")
 		}
 
 		if !found {
 			if tag.required {
-				problems = append(problems, problem{
+				problems = append(problems, Problem{
 					Field:   field.Name,
 					Key:     key,
 					Message: "required value is missing",
@@ -200,7 +200,7 @@ func decodeStruct(value reflect.Value, lookup LookupFunc, prefix string) error {
 		}
 
 		if err := assignValue(fieldValue, raw); err != nil {
-			problems = append(problems, problem{
+			problems = append(problems, Problem{
 				Field:   field.Name,
 				Key:     key,
 				Message: err.Error(),

@@ -76,13 +76,47 @@ func TestDecodeReportsMissingAndInvalidValues(t *testing.T) {
 	}
 
 	got := problemSet(cfgErr.Problems())
-	want := map[string]bool{
-		"APP_NAME: required value is missing": true,
-		"DEBUG: parse bool \"not-a-bool\": strconv.ParseBool: parsing \"not-a-bool\": invalid syntax": true,
-		"DATABASE_URL: required value is missing":                                                     true,
+	want := map[Problem]bool{
+		{Field: "Name", Key: "APP_NAME", Message: "required value is missing"}: true,
+		{
+			Field:   "Debug",
+			Key:     "DEBUG",
+			Message: "parse bool \"not-a-bool\": strconv.ParseBool: parsing \"not-a-bool\": invalid syntax",
+		}: true,
+		{Field: "DatabaseURL", Key: "DATABASE_URL", Message: "required value is missing"}: true,
 	}
 	if !maps.Equal(got, want) {
 		t.Errorf("Decode[appConfig](%v) problems = %v, want %v", values, got, want)
+	}
+}
+
+func TestDecodeReturnsZeroValueOnError(t *testing.T) {
+	values := map[string]string{
+		"APP_NAME":     "ohm-test",
+		"DEBUG":        "not-a-bool",
+		"DATABASE_URL": "postgres://localhost/ohm",
+	}
+
+	got, err := Decode[appConfig](FromMap(values))
+	if err == nil {
+		t.Fatalf("Decode[appConfig](%v) error = nil, want non-nil", values)
+	}
+	if got != (appConfig{}) {
+		t.Errorf("Decode[appConfig](%v) = %+v, want zero value on error", values, got)
+	}
+}
+
+func TestDecodeUsesExplicitEmptyDefault(t *testing.T) {
+	type cfg struct {
+		Name string `env:"APP_NAME,required" default:""`
+	}
+
+	got, err := Decode[cfg](FromMap(map[string]string{}))
+	if err != nil {
+		t.Fatalf("Decode[cfg](empty lookup) error = %v, want nil", err)
+	}
+	if got.Name != "" {
+		t.Errorf("Decode[cfg](empty lookup) Name = %q, want empty", got.Name)
 	}
 }
 
@@ -256,8 +290,8 @@ func TestFieldKey(t *testing.T) {
 	}
 }
 
-func problemSet(problems []string) map[string]bool {
-	set := make(map[string]bool, len(problems))
+func problemSet(problems []Problem) map[Problem]bool {
+	set := make(map[Problem]bool, len(problems))
 	for _, problem := range problems {
 		set[problem] = true
 	}

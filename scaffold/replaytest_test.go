@@ -2,6 +2,7 @@ package scaffold
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -137,8 +138,8 @@ func TestGenerateReplayTestRejectsUncontrolledBoundaries(t *testing.T) {
 	if err == nil {
 		t.Fatalf("GenerateReplayTest(snapshot with uncontrolled boundaries) error = nil, want non-nil")
 	}
-	if !strings.Contains(err.Error(), "records uncontrolled boundaries (clock, database_state)") {
-		t.Errorf("GenerateReplayTest(snapshot with uncontrolled boundaries) error = %v, want boundary context", err)
+	if !errors.Is(err, replay.ErrUncontrolledBoundaries) {
+		t.Errorf("GenerateReplayTest(snapshot with uncontrolled boundaries) error = %v, want ErrUncontrolledBoundaries", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(destination, "internal", "replaytests", "login_replay_test.go")); !os.IsNotExist(statErr) {
 		t.Errorf("GenerateReplayTest(snapshot with uncontrolled boundaries) file stat error = %v, want not exist", statErr)
@@ -177,8 +178,8 @@ func TestGenerateReplayTestRejectsConflictingBoundaries(t *testing.T) {
 	if err == nil {
 		t.Fatalf("GenerateReplayTest(snapshot with conflicting boundaries) error = nil, want non-nil")
 	}
-	if !strings.Contains(err.Error(), "marks clock boundary as both controlled and uncontrolled") {
-		t.Errorf("GenerateReplayTest(snapshot with conflicting boundaries) error = %v, want conflict context", err)
+	if !errors.Is(err, replay.ErrBoundaryConflict) {
+		t.Errorf("GenerateReplayTest(snapshot with conflicting boundaries) error = %v, want ErrBoundaryConflict", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(destination, "internal", "replaytests", "login_replay_test.go")); !os.IsNotExist(statErr) {
 		t.Errorf("GenerateReplayTest(snapshot with conflicting boundaries) file stat error = %v, want not exist", statErr)

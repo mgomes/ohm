@@ -145,8 +145,8 @@ func TestCommandRejectsUnknownBoundaryMetadata(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Command(handler).Run(ctx, io, %v) error = nil, want non-nil", []string{path})
 	}
-	if !strings.Contains(err.Error(), `unknown controlled boundary "network"`) {
-		t.Errorf("Command(handler).Run(ctx, io, %v) error = %v, want boundary validation context", []string{path}, err)
+	if !errors.Is(err, ErrUnknownBoundary) {
+		t.Errorf("Command(handler).Run(ctx, io, %v) error = %v, want ErrUnknownBoundary", []string{path}, err)
 	}
 }
 

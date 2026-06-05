@@ -15,6 +15,7 @@ func (s Secret) Reveal() string {
 	return string(s)
 }
 
+// String returns a redacted display value.
 func (s Secret) String() string {
 	if s == "" {
 		return ""

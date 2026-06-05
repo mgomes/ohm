@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -62,15 +63,74 @@ type PrincipalRef struct {
 // Boundary identifies an application dependency that can make replay nondeterministic.
 type Boundary string
 
-const (
-	BoundaryClock         Boundary = "clock"
-	BoundaryRandomID      Boundary = "random_id"
-	BoundaryExternalHTTP  Boundary = "external_http"
-	BoundaryEmailDelivery Boundary = "email_delivery"
-	BoundaryFileWrites    Boundary = "file_writes"
-	BoundaryDatabaseState Boundary = "database_state"
-	BoundaryFeatureFlags  Boundary = "feature_flags"
+var (
+	// ErrUnknownBoundary reports a replay boundary name outside the supported set.
+	ErrUnknownBoundary = errors.New("unknown replay boundary")
+	// ErrBoundaryConflict reports a boundary marked as both controlled and uncontrolled.
+	ErrBoundaryConflict = errors.New("conflicting replay boundary")
+	// ErrUncontrolledBoundaries reports a snapshot that still has nondeterministic boundaries.
+	ErrUncontrolledBoundaries = errors.New("uncontrolled replay boundaries")
 )
+
+const (
+	// BoundaryClock identifies wall-clock time dependencies.
+	BoundaryClock Boundary = "clock"
+	// BoundaryRandomID identifies random identifier dependencies.
+	BoundaryRandomID Boundary = "random_id"
+	// BoundaryExternalHTTP identifies external HTTP dependencies.
+	BoundaryExternalHTTP Boundary = "external_http"
+	// BoundaryEmailDelivery identifies email delivery dependencies.
+	BoundaryEmailDelivery Boundary = "email_delivery"
+	// BoundaryFileWrites identifies file write dependencies.
+	BoundaryFileWrites Boundary = "file_writes"
+	// BoundaryDatabaseState identifies database state dependencies.
+	BoundaryDatabaseState Boundary = "database_state"
+	// BoundaryFeatureFlags identifies feature flag dependencies.
+	BoundaryFeatureFlags Boundary = "feature_flags"
+)
+
+// BoundaryError describes invalid or nondeterministic replay boundary metadata.
+type BoundaryError struct {
+	// Reason is one of ErrUnknownBoundary, ErrBoundaryConflict, or
+	// ErrUncontrolledBoundaries.
+	Reason error
+	// Kind is "controlled" or "uncontrolled" for unknown-boundary errors.
+	Kind string
+	// Boundary is the boundary that failed validation.
+	Boundary Boundary
+	// Boundaries is the normalized boundary set for nondeterminism errors.
+	Boundaries []Boundary
+	// Expected is the supported boundary set for unknown-boundary errors.
+	Expected []Boundary
+}
+
+// Error returns a human-readable boundary validation message.
+func (e *BoundaryError) Error() string {
+	if e == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(e.Reason, ErrUnknownBoundary):
+		return fmt.Sprintf("replay snapshot records unknown %s boundary %q; expected one of %s", e.Kind, e.Boundary, boundaryList(e.Expected))
+	case errors.Is(e.Reason, ErrBoundaryConflict):
+		return fmt.Sprintf("replay snapshot marks %s boundary as both controlled and uncontrolled", e.Boundary)
+	case errors.Is(e.Reason, ErrUncontrolledBoundaries):
+		return fmt.Sprintf("replay snapshot records uncontrolled boundaries (%s); make those boundaries deterministic before using it as a regression test", boundaryList(e.Boundaries))
+	default:
+		if e.Reason != nil {
+			return e.Reason.Error()
+		}
+		return "replay boundary error"
+	}
+}
+
+// Unwrap returns the semantic boundary validation reason.
+func (e *BoundaryError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Reason
+}
 
 var knownBoundaries = []Boundary{
 	BoundaryClock,
@@ -287,7 +347,10 @@ func RequireDeterministic(snapshot Snapshot) error {
 		return err
 	}
 	if len(boundaries.uncontrolled) > 0 {
-		return fmt.Errorf("replay snapshot records uncontrolled boundaries (%s); make those boundaries deterministic before using it as a regression test", boundaryList(boundaries.uncontrolled))
+		return &BoundaryError{
+			Reason:     ErrUncontrolledBoundaries,
+			Boundaries: slices.Clone(boundaries.uncontrolled),
+		}
 	}
 	return nil
 }
@@ -549,7 +612,10 @@ func snapshotBoundaries(snapshot Snapshot) (normalizedSnapshotBoundaries, error)
 	}
 	for _, boundary := range uncontrolled {
 		if controlledSet[boundary] {
-			return normalizedSnapshotBoundaries{}, fmt.Errorf("replay snapshot marks %s boundary as both controlled and uncontrolled", boundary)
+			return normalizedSnapshotBoundaries{}, &BoundaryError{
+				Reason:   ErrBoundaryConflict,
+				Boundary: boundary,
+			}
 		}
 	}
 
@@ -559,7 +625,12 @@ func snapshotBoundaries(snapshot Snapshot) (normalizedSnapshotBoundaries, error)
 func validateKnownBoundaries(kind string, boundaries []Boundary) error {
 	for _, boundary := range boundaries {
 		if !slices.Contains(knownBoundaries, boundary) {
-			return fmt.Errorf("replay snapshot records unknown %s boundary %q; expected one of %s", kind, boundary, boundaryList(knownBoundaries))
+			return &BoundaryError{
+				Reason:   ErrUnknownBoundary,
+				Kind:     kind,
+				Boundary: boundary,
+				Expected: slices.Clone(knownBoundaries),
+			}
 		}
 	}
 	return nil
