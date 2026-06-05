@@ -5,7 +5,7 @@
 
 ---
 
-Ohm is a Go web framework for building server-rendered web apps with clear
+Ohm is a low resistance, Go web framework for building server-rendered web apps with clear
 defaults and ordinary Go code.
 
 It gives you the shape of a complete web app without hiding Go:
