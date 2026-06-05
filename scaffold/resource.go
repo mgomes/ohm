@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"go.yaml.in/yaml/v2"
 )
 
 const defaultQueriesDir = "queries"
@@ -194,16 +196,16 @@ func readResourceDatabase(root string) (Database, error) {
 		return "", fmt.Errorf("read sqlc config %q: %w", path, err)
 	}
 
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "- ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
-		}
-		if !strings.HasPrefix(line, "engine:") {
+	var cfg sqlcConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parse sqlc config %q: %w", path, err)
+	}
+
+	for _, sql := range cfg.SQL {
+		engine := strings.TrimSpace(sql.Engine)
+		if engine == "" {
 			continue
 		}
-		engine := strings.TrimSpace(strings.TrimPrefix(line, "engine:"))
-		engine = strings.Trim(engine, `"'`)
 		switch engine {
 		case "postgresql":
 			return DatabasePostgres, nil
@@ -214,6 +216,12 @@ func readResourceDatabase(root string) (Database, error) {
 		}
 	}
 	return "", fmt.Errorf("sqlc engine was not found in %s", path)
+}
+
+type sqlcConfig struct {
+	SQL []struct {
+		Engine string `yaml:"engine"`
+	} `yaml:"sql"`
 }
 
 func ensureResourceFilesAvailable(files []resourceFile) error {
