@@ -97,7 +97,10 @@ func parseQuotedValue(rawValue string, quote byte) (string, string, error) {
 	var builder strings.Builder
 	escaped := false
 
-	for i := 1; i < len(rawValue); i++ {
+	for i := range len(rawValue) {
+		if i == 0 {
+			continue
+		}
 		char := rawValue[i]
 		if escaped {
 			switch char {

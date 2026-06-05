@@ -236,13 +236,14 @@ func parseResourceArgs(args []string) (resourceArgs, error) {
 	parsed := resourceArgs{}
 	var positionals []string
 
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
 		switch {
 		case isHelpArg(arg):
 			return resourceArgs{}, cli.ErrHelp
 		case arg == "-dir" || arg == "--dir":
-			value, ok := nextArg(args, &i)
+			value, ok := nextArg(&args)
 			if !ok {
 				return resourceArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
 			}
@@ -289,13 +290,14 @@ func parseReplayTestArgs(args []string) (replayTestArgs, error) {
 	parsed := replayTestArgs{}
 	var positionals []string
 
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
 		switch {
 		case isHelpArg(arg):
 			return replayTestArgs{}, cli.ErrHelp
 		case arg == "-dir" || arg == "--dir":
-			value, ok := nextArg(args, &i)
+			value, ok := nextArg(&args)
 			if !ok {
 				return replayTestArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
 			}
@@ -322,13 +324,14 @@ func parseNamedDirArgs(generator string, args []string) (namedDirArgs, error) {
 	parsed := namedDirArgs{}
 	var positionals []string
 
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
 		switch {
 		case isHelpArg(arg):
 			return namedDirArgs{}, cli.ErrHelp
 		case arg == "-dir" || arg == "--dir":
-			value, ok := nextArg(args, &i)
+			value, ok := nextArg(&args)
 			if !ok {
 				return namedDirArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
 			}
@@ -364,13 +367,14 @@ func parseNewArgs(args []string) (newArgs, error) {
 	}
 	var positionals []string
 
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
 		switch {
 		case isHelpArg(arg):
 			return newArgs{}, cli.ErrHelp
 		case arg == "-db" || arg == "--db":
-			value, ok := nextArg(args, &i)
+			value, ok := nextArg(&args)
 			if !ok {
 				return newArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
 			}
@@ -380,7 +384,7 @@ func parseNewArgs(args []string) (newArgs, error) {
 		case strings.HasPrefix(arg, "--db="):
 			parsed.database = scaffold.Database(strings.TrimPrefix(arg, "--db="))
 		case arg == "-module" || arg == "--module":
-			value, ok := nextArg(args, &i)
+			value, ok := nextArg(&args)
 			if !ok {
 				return newArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
 			}
@@ -390,7 +394,7 @@ func parseNewArgs(args []string) (newArgs, error) {
 		case strings.HasPrefix(arg, "--module="):
 			parsed.module = strings.TrimPrefix(arg, "--module=")
 		case arg == "-ohm-version" || arg == "--ohm-version":
-			value, ok := nextArg(args, &i)
+			value, ok := nextArg(&args)
 			if !ok {
 				return newArgs{}, fmt.Errorf("%w: %s requires a value", cli.ErrUsage, arg)
 			}
@@ -436,12 +440,13 @@ func resolveLatestOhmVersion(ctx context.Context) (string, error) {
 	return module.Version, nil
 }
 
-func nextArg(args []string, i *int) (string, bool) {
-	if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
+func nextArg(args *[]string) (string, bool) {
+	if len(*args) == 0 || strings.HasPrefix((*args)[0], "-") {
 		return "", false
 	}
-	*i = *i + 1
-	return args[*i], true
+	value := (*args)[0]
+	*args = (*args)[1:]
+	return value, true
 }
 
 func isHelpArg(arg string) bool {

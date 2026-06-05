@@ -125,8 +125,9 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 // carries the shared shutdown deadline.
 func runShutdownHooks(ctx context.Context, hooks []ShutdownHook) error {
 	var errs []error
-	for i := len(hooks) - 1; i >= 0; i-- {
-		if err := hooks[i](ctx); err != nil {
+	for i := range len(hooks) {
+		hook := hooks[len(hooks)-1-i]
+		if err := hook(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
