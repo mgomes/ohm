@@ -113,12 +113,35 @@ fully typed. This is the only tracing API ordinary application code is expected
 to touch. Attributes, when wanted, are set through the span pulled from context,
 not by passing a tracer around.
 
+### Tail-biased observed spans
+
+Most application helpers do not need a live child span. They need a breadcrumb
+only when something is slow or failed. For that case, applications use
+`ohm.Observe` instead of `ohm.Span`:
+
+```go
+user, err := ohm.Observe(ctx, "load user", func(ctx context.Context) (User, error) {
+	return store.User(ctx, id)
+}, ohm.SlowAfter(50*time.Millisecond))
+```
+
+`Observe` passes the original context into the work and normally emits no span.
+If the work returns an error, or if it exceeds the configured slow threshold, Ohm
+creates a child span after the fact using the recorded start and end timestamps.
+The resulting trace keeps high-volume fast successes quiet while still surfacing
+the expensive and failing operations that explain a request.
+
+Because `Observe` does not install a live child span while the work runs,
+downstream calls continue to attach to the existing context span. Code that
+needs outbound propagation or nested children under the operation should use
+`ohm.Span`.
+
 ### Zero configuration and zero cost when disabled
 
 OTel is off by default. With no provider configured, the OTel API returns a
-no-op tracer, so the middleware seam and `ohm.Span`/`ohm.Do` call through the
-no-op with negligible overhead and no nil checks anywhere. Enabling OTel is a
-single server option that wires the resource, propagators, exporters, and
+no-op tracer, so the middleware seam and Ohm's manual span helpers call through
+the no-op with negligible overhead and no nil checks anywhere. Enabling OTel is
+a single server option that wires the resource, propagators, exporters, and
 provider, and registers provider shutdown in the existing server lifecycle.
 
 ### Dependency hygiene
