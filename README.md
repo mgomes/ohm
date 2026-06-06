@@ -16,7 +16,10 @@ It gives you the shape of a complete web app without hiding Go:
 - `templ` views for pages, layouts, components, forms, and errors.
 - Typed config backed by deterministic `.env` loading.
 - `sqlc` queries and `goose` migrations instead of an ORM.
-- Structured `slog` logging with sensitive-value scrubbing.
+- Structured `slog` logging with sensitive-value scrubbing and trace
+  correlation.
+- Low-pollution OpenTelemetry tracing at framework seams, with observed spans
+  for slow or failing helper work.
 - Replayable request snapshots that can become regression tests.
 
 Ohm is for people who want the productive parts of a full-stack framework while
@@ -92,5 +95,6 @@ go run ./cmd/journal replay ./tmp/replays/request.json
 
 - [Getting started](docs/getting-started.md)
 - [Application guide](docs/application-guide.md)
+- [Observability](docs/observability.md)
 - [Release guide](docs/releasing.md)
 - [Architecture decisions](docs/adr)

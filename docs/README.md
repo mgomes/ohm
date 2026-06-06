@@ -4,6 +4,7 @@ Start here:
 
 - [Getting started](getting-started.md)
 - [Application guide](application-guide.md)
+- [Observability](observability.md)
 - [Release guide](releasing.md)
 - [Architecture decisions](adr)
 
