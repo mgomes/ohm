@@ -143,6 +143,14 @@ Generated apps wrap the JSON slog handler with Ohm's scrubber. The scrubber is
 case-insensitive and matches common secret names such as password, token,
 authorization, cookie, session, and API key.
 
+Generated apps also install request tracing and trace-aware logging. Normal
+handlers do not need tracer plumbing. Use `ohm.Observe` for helper work that
+should only appear in traces when it is slow or failing, and use `ohm.Span` only
+when downstream work needs a live child span.
+
+See [Observability](observability.md) for OpenTelemetry setup, observed spans,
+and flight recording.
+
 Do not log full request bodies, cookies, or headers unless the app has a clear
 reason. When you opt into more request data, keep the scrubber in the path.
 
