@@ -50,19 +50,22 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/views/assets/assets_test.go",
 		"internal/views/components/README.md",
 		"internal/views/components/flash.go",
-		"internal/views/components/flash.templ",
 		"internal/views/components/flash_test.go",
-		"internal/views/components/flash_templ.go",
 		"internal/views/forms/forms.go",
 		"internal/views/forms/forms_test.go",
-		"internal/views/layouts/application.templ",
-		"internal/views/layouts/application_templ.go",
-		"internal/views/pages/error.templ",
+		"internal/views/pages/error.go",
 		"internal/views/pages/error_test.go",
-		"internal/views/pages/error_templ.go",
-		"internal/views/pages/home.templ",
+		"internal/views/pages/home.go",
 		"internal/views/pages/home_test.go",
-		"internal/views/pages/home_templ.go",
+		"internal/views/partials/README.md",
+		"internal/views/partials/home.go",
+		"internal/views/partials/home_test.go",
+		"internal/views/templates/components/flash.html",
+		"internal/views/templates/layouts/application.html",
+		"internal/views/templates/pages/error.html",
+		"internal/views/templates/pages/home.html",
+		"internal/views/templates/partials/home.html",
+		"internal/views/views.go",
 		"migrations/README.md",
 		"queries/health.sql",
 		"sqlc.yaml",
@@ -84,8 +87,8 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(goMod, "modernc.org/sqlite v1.51.0") {
 		t.Errorf("GenerateApp(sqlite app) go.mod = %q, want sqlite driver dependency", goMod)
 	}
-	if !strings.Contains(goMod, "github.com/a-h/templ v0.3.1020") {
-		t.Errorf("GenerateApp(sqlite app) go.mod = %q, want templ dependency", goMod)
+	if strings.Contains(goMod, "github.com/a-h/templ") {
+		t.Errorf("GenerateApp(sqlite app) go.mod = %q, want no templ dependency", goMod)
 	}
 
 	gitignore := readFile(t, filepath.Join(destination, ".gitignore"))
@@ -169,8 +172,8 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(justfile, "test-integration:") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want test-integration task", justfile)
 	}
-	if !strings.Contains(justfile, "generate: templ sqlc") {
-		t.Errorf("GenerateApp(sqlite app) justfile = %q, want generate task", justfile)
+	if !strings.Contains(justfile, "generate: sqlc") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want sqlc-only generate task", justfile)
 	}
 	if !strings.Contains(justfile, "test: generate") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want test task to regenerate code", justfile)
@@ -193,8 +196,8 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(justfile, "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want pinned sqlc generation task", justfile)
 	}
-	if !strings.Contains(justfile, "github.com/a-h/templ/cmd/templ@v0.3.1020 generate") {
-		t.Errorf("GenerateApp(sqlite app) justfile = %q, want pinned templ generation task", justfile)
+	if strings.Contains(justfile, "github.com/a-h/templ/cmd/templ") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want no templ generation task", justfile)
 	}
 
 	sqlcConfig := readFile(t, filepath.Join(destination, "sqlc.yaml"))
@@ -256,8 +259,17 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(homeFile, `"example.com/journal/internal/views/pages"`) {
 		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want page view import", homeFile)
 	}
-	if !strings.Contains(homeFile, `return req.HTML(http.StatusOK, pages.Home("Journal"))`) {
-		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want HTML view rendering", homeFile)
+	if !strings.Contains(homeFile, `"example.com/journal/internal/views/partials"`) {
+		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want partial view import", homeFile)
+	}
+	if !strings.Contains(homeFile, `"github.com/mgomes/ohm/htmx"`) {
+		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want htmx adapter import", homeFile)
+	}
+	if !strings.Contains(homeFile, `return htmx.Render(req, http.StatusOK, ohm.View(`) {
+		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want htmx view rendering", homeFile)
+	}
+	if !strings.Contains(homeFile, `ohm.Fragment("home", partials.Home(title))`) {
+		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want home partial fragment", homeFile)
 	}
 	if strings.Contains(homeFile, `func Register(`) {
 		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want route registration in routes.go", homeFile)
@@ -276,14 +288,30 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		t.Errorf("GenerateApp(sqlite app) internal/services/README.md = %q, want service ownership guidance", servicesReadme)
 	}
 
-	homeView := readFile(t, filepath.Join(destination, "internal", "views", "pages", "home.templ"))
-	if !strings.Contains(homeView, `@layouts.Application(title)`) {
-		t.Errorf("GenerateApp(sqlite app) internal/views/pages/home.templ = %q, want application layout", homeView)
+	viewHelper := readFile(t, filepath.Join(destination, "internal", "views", "views.go"))
+	if !strings.Contains(viewHelper, `htmltemplate.Must(htmltemplate.ParseFS`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/views.go = %q, want html/template parser", viewHelper)
+	}
+	if !strings.Contains(viewHelper, `func Page(title string, body ohm.HTML) ohm.HTML`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/views.go = %q, want page layout helper", viewHelper)
 	}
 
-	errorView := readFile(t, filepath.Join(destination, "internal", "views", "pages", "error.templ"))
-	if !strings.Contains(errorView, `templ Error(status int, message string)`) {
-		t.Errorf("GenerateApp(sqlite app) internal/views/pages/error.templ = %q, want error page component", errorView)
+	homeView := readFile(t, filepath.Join(destination, "internal", "views", "templates", "pages", "home.html"))
+	if !strings.Contains(homeView, `{{ template "partials/home" . }}`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/templates/pages/home.html = %q, want partial template call", homeView)
+	}
+
+	homePartial := readFile(t, filepath.Join(destination, "internal", "views", "templates", "partials", "home.html"))
+	if !strings.Contains(homePartial, `<section id="home">`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/templates/partials/home.html = %q, want home target", homePartial)
+	}
+	if !strings.Contains(homePartial, `<h1>Welcome to {{ .Title }}</h1>`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/templates/partials/home.html = %q, want heading", homePartial)
+	}
+
+	errorView := readFile(t, filepath.Join(destination, "internal", "views", "templates", "pages", "error.html"))
+	if !strings.Contains(errorView, `{{ define "pages/error" -}}`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/templates/pages/error.html = %q, want error page template", errorView)
 	}
 
 	flashComponent := readFile(t, filepath.Join(destination, "internal", "views", "components", "flash.go"))
@@ -294,9 +322,9 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/components/flash.go = %q, want flash message constructor", flashComponent)
 	}
 
-	flashView := readFile(t, filepath.Join(destination, "internal", "views", "components", "flash.templ"))
-	if !strings.Contains(flashView, `templ Flash(messages []FlashMessage)`) {
-		t.Errorf("GenerateApp(sqlite app) internal/views/components/flash.templ = %q, want flash component", flashView)
+	flashView := readFile(t, filepath.Join(destination, "internal", "views", "templates", "components", "flash.html"))
+	if !strings.Contains(flashView, `{{ define "components/flash" -}}`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/templates/components/flash.html = %q, want flash template", flashView)
 	}
 
 	if !strings.Contains(appTestFile, `hasRoute(routes, "GET", "/")`) {
@@ -440,7 +468,6 @@ func TestGeneratedSQLiteApplicationBuilds(t *testing.T) {
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
 	runGo(t, destination, "mod", "tidy")
 	runGo(t, destination, "run", "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0", "generate")
-	runGo(t, destination, "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
 	runGo(t, destination, "run", "./cmd/smoke", "db", "seed")
 	runGo(t, destination, "test", "./...")
 }
@@ -462,7 +489,6 @@ func TestGeneratedPostgresApplicationBuilds(t *testing.T) {
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
 	runGo(t, destination, "mod", "tidy")
 	runGo(t, destination, "run", "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0", "generate")
-	runGo(t, destination, "run", "github.com/a-h/templ/cmd/templ@v0.3.1020", "generate")
 	runGo(t, destination, "test", "./...")
 }
 

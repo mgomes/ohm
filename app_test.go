@@ -12,8 +12,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/a-h/templ"
 )
 
 func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
@@ -136,10 +134,10 @@ func TestRequestNoContentRendersNoContent(t *testing.T) {
 	}
 }
 
-func TestRequestHTMLRendersTemplComponent(t *testing.T) {
+func TestRequestHTMLRendersHTML(t *testing.T) {
 	app := New()
 	app.Get("/", func(req *Request) error {
-		return req.HTML(http.StatusCreated, templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+		return req.HTML(http.StatusCreated, HTMLFunc(func(_ context.Context, w io.Writer) error {
 			_, err := io.WriteString(w, "<h1>Welcome</h1>")
 			return err
 		}))
@@ -169,7 +167,7 @@ func TestRequestHTMLReturnsComponentErrorBeforeWritingResponse(t *testing.T) {
 		req.PlainText(http.StatusInternalServerError, "handled")
 	}))
 	app.Get("/", func(req *Request) error {
-		return req.HTML(http.StatusOK, templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+		return req.HTML(http.StatusOK, HTMLFunc(func(_ context.Context, w io.Writer) error {
 			if _, err := io.WriteString(w, "partial"); err != nil {
 				return err
 			}
@@ -203,7 +201,7 @@ func TestRequestHTMLRejectsInvalidResponse(t *testing.T) {
 		return req.HTML(http.StatusOK, nil)
 	})
 	app.Get("/status", func(req *Request) error {
-		return req.HTML(0, templ.ComponentFunc(func(context.Context, io.Writer) error {
+		return req.HTML(0, HTMLFunc(func(context.Context, io.Writer) error {
 			return nil
 		}))
 	})
@@ -212,7 +210,7 @@ func TestRequestHTMLRejectsInvalidResponse(t *testing.T) {
 		path string
 		want string
 	}{
-		{path: "/nil", want: "html component is required"},
+		{path: "/nil", want: "html renderer is required"},
 		{path: "/status", want: "html status code 0 is invalid"},
 	}
 	for _, tt := range tests {

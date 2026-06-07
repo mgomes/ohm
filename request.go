@@ -3,8 +3,6 @@ package ohm
 import (
 	"context"
 	"net/http"
-
-	"github.com/a-h/templ"
 )
 
 // Request is the Ohm request and response boundary passed to handlers.
@@ -67,9 +65,9 @@ func (r *Request) Render(v Renderer) error {
 	return renderResponse(r.w, r.r, v)
 }
 
-// HTML renders a templ component as HTML with status.
-func (r *Request) HTML(status int, component templ.Component) error {
-	return RenderHTML(r.w, r.r, status, component)
+// HTML renders content as HTML with status.
+func (r *Request) HTML(status int, html HTML) error {
+	return RenderHTML(r.w, r.r, status, html)
 }
 
 // JSON renders v as JSON with status.

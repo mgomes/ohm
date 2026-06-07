@@ -88,7 +88,7 @@ ohm generate migration create_posts
 Generators only add files and route wiring. The generated code is normal app
 code.
 
-Use `just generate` when you only want to refresh templ and sqlc output.
+Use `just generate` when you only want to refresh generated sqlc output.
 
 ## Useful app commands
 

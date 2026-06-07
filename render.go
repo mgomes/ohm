@@ -13,7 +13,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/a-h/templ"
 	"github.com/ajg/form"
 )
 
@@ -27,24 +26,24 @@ func SetStatus(r *http.Request, status int) {
 	*r = *r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, status))
 }
 
-// RenderHTML renders a templ component as an HTML response with status.
-func RenderHTML(w http.ResponseWriter, r *http.Request, status int, component templ.Component) error {
+// RenderHTML renders content as an HTML response with status.
+func RenderHTML(w http.ResponseWriter, r *http.Request, status int, html HTML) error {
 	if w == nil {
 		return fmt.Errorf("html response writer is required")
 	}
 	if r == nil {
 		return fmt.Errorf("html request is required")
 	}
-	if component == nil {
-		return fmt.Errorf("html component is required")
+	if html == nil {
+		return fmt.Errorf("html renderer is required")
 	}
 	if status < 100 || status > 999 {
 		return fmt.Errorf("html status code %d is invalid", status)
 	}
 
 	var body bytes.Buffer
-	if err := component.Render(r.Context(), &body); err != nil {
-		return fmt.Errorf("render html component: %w", err)
+	if err := html.RenderHTML(r.Context(), &body); err != nil {
+		return fmt.Errorf("render html: %w", err)
 	}
 
 	writeHTML(w, status, body.String())

@@ -24,7 +24,6 @@ var projectTemplates = map[string]string{
 go 1.25.0
 
 require (
-	{{.TemplModule}} {{.TemplVersion}}
 	github.com/mgomes/ohm {{.OhmVersion}}
 	{{.DriverModule}} {{.DriverVersion}}
 )
@@ -96,10 +95,7 @@ test-db-setup:
 sqlc:
     go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
 
-templ:
-    go run github.com/a-h/templ/cmd/templ@{{.TemplVersion}} generate
-
-generate: templ sqlc
+generate: sqlc
 
 test: generate
     go test ./...
