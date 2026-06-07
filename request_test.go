@@ -72,7 +72,7 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 		"tags=html",
 		"page=3",
 		"author.name=ada",
-		"published_at=2026-06-07",
+		"published_at=2026-06-07T12:30",
 	}, "&")))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -107,7 +107,7 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 	if got.Author.Name != "ada" {
 		t.Errorf("Request.Decode(form).Author.Name = %q, want %q", got.Author.Name, "ada")
 	}
-	wantPublishedAt := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	wantPublishedAt := time.Date(2026, 6, 7, 12, 30, 0, 0, time.UTC)
 	if !got.PublishedAt.Equal(wantPublishedAt) {
 		t.Errorf("Request.Decode(form).PublishedAt = %v, want %v", got.PublishedAt, wantPublishedAt)
 	}

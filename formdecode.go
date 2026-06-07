@@ -369,6 +369,9 @@ func cloneFormValues(values url.Values) url.Values {
 var formTimeLayouts = []string{
 	time.RFC3339Nano,
 	time.RFC3339,
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04",
 	"2006-01-02",
 	"2006-01",
 	"2006",
