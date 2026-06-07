@@ -50,7 +50,7 @@ func TestRenderSetsVaryHeaders(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
 	}
-	assertVary(t, response.Header(), "Accept", htmx.HeaderRequest, htmx.HeaderTarget, htmx.HeaderHistoryRestoreRequest)
+	assertVary(t, response.Header(), "Accept", htmx.HeaderRequest, htmx.HeaderBoosted, htmx.HeaderTarget, htmx.HeaderHistoryRestoreRequest)
 }
 
 func TestRenderUsesFragmentForMatchingTarget(t *testing.T) {
@@ -93,6 +93,28 @@ func TestRenderUsesFullViewForHistoryRestore(t *testing.T) {
 	}
 	if got := response.Body.String(); got != "full" {
 		t.Errorf("htmx.Render(history restore request) body = %q, want %q", got, "full")
+	}
+}
+
+func TestRenderUsesFullViewForBoostedRequest(t *testing.T) {
+	app := newViewApp(t, ohm.View(
+		testComponent("full"),
+		ohm.Fragment("posts", testComponent("fragment")),
+	))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderBoosted, "true")
+	request.Header.Set(htmx.HeaderTarget, "posts")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+	if got := response.Body.String(); got != "full" {
+		t.Errorf("htmx.Render(boosted request) body = %q, want %q", got, "full")
 	}
 }
 
@@ -163,7 +185,7 @@ func TestRenderRejectsUnknownTarget(t *testing.T) {
 	if got := response.Body.String(); got != "unknown htmx target" {
 		t.Errorf("htmx.Render(unknown target) body = %q, want public error message", got)
 	}
-	assertVary(t, response.Header(), htmx.HeaderRequest, htmx.HeaderTarget, htmx.HeaderHistoryRestoreRequest)
+	assertVary(t, response.Header(), htmx.HeaderRequest, htmx.HeaderBoosted, htmx.HeaderTarget, htmx.HeaderHistoryRestoreRequest)
 	if !errors.Is(gotErr, htmx.ErrUnknownTarget) {
 		t.Errorf("htmx.Render(unknown target) error = %v, want %v", gotErr, htmx.ErrUnknownTarget)
 	}

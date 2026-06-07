@@ -145,6 +145,7 @@ declared as `ohm.Fragment("home", partials.Home(title))`.
 
 - Normal browser requests render the full page.
 - htmx history-restore requests render the full page.
+- htmx boosted navigation requests render the full page.
 - htmx requests with a matching `HX-Target` render that target's fragment.
 - Targetless htmx requests render the full page by default.
 - Unknown htmx targets return a safe `400 Bad Request` application error.
@@ -163,7 +164,7 @@ return htmx.Render(req, http.StatusOK, ohm.View(
 ```
 
 Use the fallback sparingly. Prefer explicit htmx targets when the page has more
-than one replaceable region or when the route may be used by boosted navigation.
+than one replaceable region.
 
 ## Multiple Fragments
 

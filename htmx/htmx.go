@@ -162,7 +162,7 @@ func Render(req *ohm.Request, status int, view ohm.HTMLView, opts ...Option) err
 	if req == nil {
 		return fmt.Errorf("htmx render request is required")
 	}
-	addVary(req.ResponseWriter(), HeaderRequest, HeaderTarget, HeaderHistoryRestoreRequest)
+	addVary(req.ResponseWriter(), HeaderRequest, HeaderBoosted, HeaderTarget, HeaderHistoryRestoreRequest)
 	html, err := Select(req.HTTPRequest(), view, opts...)
 	if err != nil {
 		return err
@@ -178,7 +178,7 @@ func Select(r *http.Request, view ohm.HTMLView, opts ...Option) (ohm.HTML, error
 
 	options := applyOptions(opts)
 	request := ParseRequest(r)
-	if !request.IsRequest() || request.IsHistoryRestore() {
+	if !request.IsRequest() || request.IsBoosted() || request.IsHistoryRestore() {
 		return view.Full(), nil
 	}
 

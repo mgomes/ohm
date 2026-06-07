@@ -66,9 +66,8 @@ The htmx adapter should follow conservative response selection:
 
 - Normal browser requests render the full response.
 - htmx history-restore requests render the full response.
+- htmx boosted navigation requests render the full response.
 - htmx requests with a matching explicit target render that target's fragment.
-- Ambiguous boosted requests render the full response unless the handler opts
-  into a single-fragment fallback.
 - Missing or unknown targets return an application error rather than silently
   rendering the wrong fragment.
 

@@ -130,8 +130,9 @@ func Home(req *ohm.Request) error {
 ```
 
 Normal browser requests render the full page. htmx requests with a matching
-`HX-Target` render the matching fragment. htmx history-restore requests render
-the full page so direct navigation and browser history keep working.
+`HX-Target` render the matching fragment. htmx history-restore and boosted
+navigation requests render the full page so direct navigation and browser
+history keep working.
 
 Fragment target names are part of your HTML contract. Keep them stable and test
 the target-aware path when a route supports htmx.
