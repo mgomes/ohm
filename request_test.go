@@ -75,6 +75,7 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 		"prefs.theme=dark",
 		"prefs.locale=en-US",
 		"published_at=2026-06-07T12:30",
+		"time_only=12:30:15.123",
 	}, "&")))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -118,6 +119,10 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 	wantPublishedAt := time.Date(2026, 6, 7, 12, 30, 0, 0, time.UTC)
 	if !got.PublishedAt.Equal(wantPublishedAt) {
 		t.Errorf("Request.Decode(form).PublishedAt = %v, want %v", got.PublishedAt, wantPublishedAt)
+	}
+	wantTimeOnly := time.Date(0, 1, 1, 12, 30, 15, 123000000, time.UTC)
+	if !got.TimeOnly.Equal(wantTimeOnly) {
+		t.Errorf("Request.Decode(form).TimeOnly = %v, want %v", got.TimeOnly, wantTimeOnly)
 	}
 	if got.Ignored != "" {
 		t.Errorf("Request.Decode(form).Ignored = %q, want empty", got.Ignored)
@@ -303,6 +308,7 @@ type formPayload struct {
 	Author      author            `form:"author" json:"author"`
 	Preferences map[string]string `form:"prefs" json:"prefs"`
 	PublishedAt time.Time         `form:"published_at" json:"published_at"`
+	TimeOnly    time.Time         `form:"time_only" json:"time_only"`
 	Ignored     string            `form:"-" json:"ignored"`
 }
 
