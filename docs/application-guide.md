@@ -8,7 +8,7 @@ The generated layout is:
 cmd/myapp/          CLI entrypoint
 internal/app/       app wiring, logger, router, and dependencies
 internal/handlers/  HTTP handlers
-internal/views/     templ views, layouts, components, forms, and assets
+internal/views/     templ views, layouts, pages, partials, components, forms, and assets
 internal/services/  business workflows
 internal/db/        database connection, migrations, seeds, and generated queries
 migrations/         goose migration files
@@ -80,15 +80,55 @@ Generated views live under:
 ```text
 internal/views/layouts/
 internal/views/pages/
+internal/views/partials/
 internal/views/components/
 internal/views/forms/
 internal/views/assets/
 ```
 
-Render pages explicitly from handlers. Pass typed data into components. Use JSON
+Render pages explicitly from handlers. Pass typed data into views. Use JSON
 responses when an endpoint should return JSON.
 
 HTML is the default path, not the only path.
+
+### HTML fragments and htmx
+
+Ohm treats HTML fragments as a core server-rendered view concept. A page is the
+full document path. A partial is a route-addressable fragment that can update a
+named page region. Components are smaller reusable pieces used by either pages
+or partials.
+
+Use `ohm.View` to declare the full page and valid fragments from the same view
+model. Use `ohm/htmx` when htmx should choose a fragment by `HX-Target`.
+
+```go
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/mgomes/ohm"
+	"github.com/mgomes/ohm/htmx"
+
+	"example.com/journal/internal/views/pages"
+	"example.com/journal/internal/views/partials"
+)
+
+func Home(req *ohm.Request) error {
+	title := "Journal"
+	return htmx.Render(req, http.StatusOK, ohm.View(
+		pages.Home(title),
+		ohm.Fragment("home", partials.Home(title)),
+	))
+}
+```
+
+Normal browser requests render the full page. htmx requests with a matching
+`HX-Target` render the matching fragment. htmx history-restore requests render
+the full page so direct navigation and browser history keep working.
+
+Fragment target names are part of your HTML contract. Keep them stable and test
+the target-aware path when a route supports htmx.
 
 ## Config
 

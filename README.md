@@ -13,7 +13,8 @@ It gives you the shape of a complete web app without hiding Go:
 - A framework CLI for creating apps and generating code.
 - An app-owned CLI for serving, routing, migrating, seeding, and replaying.
 - Routing behind a small Ohm handler layer.
-- `templ` views for pages, layouts, components, forms, and errors.
+- `templ` views for pages, partials, layouts, components, forms, and errors.
+- A blessed htmx adapter for target-aware server-rendered fragments.
 - Typed config backed by deterministic `.env` loading.
 - `sqlc` queries and `goose` migrations instead of an ORM.
 - Structured `slog` logging with sensitive-value scrubbing and trace

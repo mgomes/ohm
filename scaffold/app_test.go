@@ -63,6 +63,10 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 		"internal/views/pages/home.templ",
 		"internal/views/pages/home_test.go",
 		"internal/views/pages/home_templ.go",
+		"internal/views/partials/README.md",
+		"internal/views/partials/home.templ",
+		"internal/views/partials/home_test.go",
+		"internal/views/partials/home_templ.go",
 		"migrations/README.md",
 		"queries/health.sql",
 		"sqlc.yaml",
@@ -256,8 +260,17 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(homeFile, `"example.com/journal/internal/views/pages"`) {
 		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want page view import", homeFile)
 	}
-	if !strings.Contains(homeFile, `return req.HTML(http.StatusOK, pages.Home("Journal"))`) {
-		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want HTML view rendering", homeFile)
+	if !strings.Contains(homeFile, `"example.com/journal/internal/views/partials"`) {
+		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want partial view import", homeFile)
+	}
+	if !strings.Contains(homeFile, `"github.com/mgomes/ohm/htmx"`) {
+		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want htmx adapter import", homeFile)
+	}
+	if !strings.Contains(homeFile, `return htmx.Render(req, http.StatusOK, ohm.View(`) {
+		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want htmx view rendering", homeFile)
+	}
+	if !strings.Contains(homeFile, `ohm.Fragment("home", partials.Home(title))`) {
+		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want home partial fragment", homeFile)
 	}
 	if strings.Contains(homeFile, `func Register(`) {
 		t.Errorf("GenerateApp(sqlite app) internal/handlers/home.go = %q, want route registration in routes.go", homeFile)
@@ -279,6 +292,17 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	homeView := readFile(t, filepath.Join(destination, "internal", "views", "pages", "home.templ"))
 	if !strings.Contains(homeView, `@layouts.Application(title)`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/pages/home.templ = %q, want application layout", homeView)
+	}
+	if !strings.Contains(homeView, `@partials.Home(title)`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/pages/home.templ = %q, want partial reuse", homeView)
+	}
+
+	homePartial := readFile(t, filepath.Join(destination, "internal", "views", "partials", "home.templ"))
+	if !strings.Contains(homePartial, `<section id="home">`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/partials/home.templ = %q, want home target", homePartial)
+	}
+	if !strings.Contains(homePartial, `<h1>{ "Welcome to " + title }</h1>`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/partials/home.templ = %q, want heading", homePartial)
 	}
 
 	errorView := readFile(t, filepath.Join(destination, "internal", "views", "pages", "error.templ"))

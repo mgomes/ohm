@@ -271,12 +271,18 @@ import (
 	"net/http"
 
 	"github.com/mgomes/ohm"
+	"github.com/mgomes/ohm/htmx"
 
 	"{{.Module}}/internal/views/pages"
+	"{{.Module}}/internal/views/partials"
 )
 
 func Home(req *ohm.Request) error {
-	return req.HTML(http.StatusOK, pages.Home("{{.Title}}"))
+	title := "{{.Title}}"
+	return htmx.Render(req, http.StatusOK, ohm.View(
+		pages.Home(title),
+		ohm.Fragment("home", partials.Home(title)),
+	))
 }
 `,
 	"internal/handlers/routes.go": `package handlers
@@ -296,6 +302,7 @@ import (
 	"testing"
 
 	"github.com/mgomes/ohm"
+	"github.com/mgomes/ohm/htmx"
 )
 
 func TestHome(t *testing.T) {
@@ -318,6 +325,28 @@ func TestHome(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), "<h1>Welcome to {{.Title}}</h1>") {
 		t.Errorf("Home(%s %s) body = %q, want welcome heading", request.Method, request.URL.Path, response.Body.String())
+	}
+}
+
+func TestHomeRendersHTMXPartial(t *testing.T) {
+	application := ohm.New()
+	Register(application)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "home")
+
+	application.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Errorf("Home(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+	if !strings.Contains(response.Body.String(), ` + "`<section id=\"home\">`" + `) {
+		t.Errorf("Home(%s %s) body = %q, want home partial", request.Method, request.URL.Path, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "<!doctype html>") {
+		t.Errorf("Home(%s %s) body = %q, want fragment without document layout", request.Method, request.URL.Path, response.Body.String())
 	}
 }
 `,
