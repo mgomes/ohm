@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRequestBindDecodesJSONAndRunsBinders(t *testing.T) {
@@ -62,7 +63,19 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 	})
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("title=hello"))
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(strings.Join([]string{
+		"title=hello",
+		"published=on",
+		"count=12",
+		"tags=go",
+		"tags=html",
+		"page=3",
+		"author.name=ada",
+		"prefs.theme=dark",
+		"prefs.locale=en-US",
+		"published_at=2026-06-07T12:30",
+		"time_only=12:30:15.123",
+	}, "&")))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	app.ServeHTTP(response, request)
@@ -77,6 +90,71 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 	}
 	if got.Title != "hello" {
 		t.Errorf("Request.Decode(form).Title = %q, want %q", got.Title, "hello")
+	}
+	if !got.Published {
+		t.Errorf("Request.Decode(form).Published = false, want true")
+	}
+	if got.Count != 12 {
+		t.Errorf("Request.Decode(form).Count = %d, want %d", got.Count, 12)
+	}
+	if len(got.Tags) != 2 || got.Tags[0] != "go" || got.Tags[1] != "html" {
+		t.Errorf("Request.Decode(form).Tags = %#v, want %#v", got.Tags, []string{"go", "html"})
+	}
+	if got.Page == nil {
+		t.Fatalf("Request.Decode(form).Page = nil, want pointer")
+	}
+	if *got.Page != 3 {
+		t.Errorf("Request.Decode(form).Page = %d, want %d", *got.Page, 3)
+	}
+	if got.Author.Name != "ada" {
+		t.Errorf("Request.Decode(form).Author.Name = %q, want %q", got.Author.Name, "ada")
+	}
+	if got.Preferences["theme"] != "dark" {
+		t.Errorf("Request.Decode(form).Preferences[theme] = %q, want %q", got.Preferences["theme"], "dark")
+	}
+	if got.Preferences["locale"] != "en-US" {
+		t.Errorf("Request.Decode(form).Preferences[locale] = %q, want %q", got.Preferences["locale"], "en-US")
+	}
+	wantPublishedAt := time.Date(2026, 6, 7, 12, 30, 0, 0, time.UTC)
+	if !got.PublishedAt.Equal(wantPublishedAt) {
+		t.Errorf("Request.Decode(form).PublishedAt = %v, want %v", got.PublishedAt, wantPublishedAt)
+	}
+	wantTimeOnly := time.Date(0, 1, 1, 12, 30, 15, 123000000, time.UTC)
+	if !got.TimeOnly.Equal(wantTimeOnly) {
+		t.Errorf("Request.Decode(form).TimeOnly = %v, want %v", got.TimeOnly, wantTimeOnly)
+	}
+	if got.Ignored != "" {
+		t.Errorf("Request.Decode(form).Ignored = %q, want empty", got.Ignored)
+	}
+}
+
+func TestRequestDecodeReadsFormBodyForAnyMethod(t *testing.T) {
+	app := New()
+	app.Delete("/posts/1", func(req *Request) error {
+		var payload formPayload
+		if err := req.Decode(&payload); err != nil {
+			return err
+		}
+		req.JSON(http.StatusOK, payload)
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/posts/1", strings.NewReader("title=removed"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+
+	var got formPayload
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("json.Decode(response body) error = %v, want nil", err)
+	}
+	if got.Title != "removed" {
+		t.Errorf("Request.Decode(form).Title = %q, want %q", got.Title, "removed")
 	}
 }
 
@@ -217,7 +295,20 @@ func (c *bindChild) Bind(*http.Request) error {
 }
 
 type formPayload struct {
-	Title string `form:"title" json:"title"`
+	Title       string            `form:"title" json:"title"`
+	Published   bool              `form:"published" json:"published"`
+	Count       int               `form:"count" json:"count"`
+	Tags        []string          `form:"tags" json:"tags"`
+	Page        *int              `form:"page" json:"page"`
+	Author      author            `form:"author" json:"author"`
+	Preferences map[string]string `form:"prefs" json:"prefs"`
+	PublishedAt time.Time         `form:"published_at" json:"published_at"`
+	TimeOnly    time.Time         `form:"time_only" json:"time_only"`
+	Ignored     string            `form:"-" json:"ignored"`
+}
+
+type author struct {
+	Name string `form:"name" json:"name"`
 }
 
 type renderPayload struct {

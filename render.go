@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
-
-	"github.com/ajg/form"
 )
 
 type responseStatusKey struct{}
@@ -79,7 +77,7 @@ func decodeRequest(r *http.Request, v any) error {
 		defer drainBody(r.Body)
 		return xml.NewDecoder(r.Body).Decode(v)
 	case contentTypeForm:
-		return form.NewDecoder(r.Body).Decode(v)
+		return decodeForm(r, v)
 	default:
 		return errors.New("ohm: unable to automatically decode the request content type")
 	}
