@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRequestBindDecodesJSONAndRunsBinders(t *testing.T) {
@@ -62,7 +64,16 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 	})
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("title=hello"))
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(strings.Join([]string{
+		"title=hello",
+		"published=on",
+		"count=12",
+		"tags=go",
+		"tags=html",
+		"page=3",
+		"author.name=ada",
+		"published_at=2026-06-07",
+	}, "&")))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	app.ServeHTTP(response, request)
@@ -77,6 +88,65 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 	}
 	if got.Title != "hello" {
 		t.Errorf("Request.Decode(form).Title = %q, want %q", got.Title, "hello")
+	}
+	if !got.Published {
+		t.Errorf("Request.Decode(form).Published = false, want true")
+	}
+	if got.Count != 12 {
+		t.Errorf("Request.Decode(form).Count = %d, want %d", got.Count, 12)
+	}
+	if len(got.Tags) != 2 || got.Tags[0] != "go" || got.Tags[1] != "html" {
+		t.Errorf("Request.Decode(form).Tags = %#v, want %#v", got.Tags, []string{"go", "html"})
+	}
+	if got.Page == nil {
+		t.Fatalf("Request.Decode(form).Page = nil, want pointer")
+	}
+	if *got.Page != 3 {
+		t.Errorf("Request.Decode(form).Page = %d, want %d", *got.Page, 3)
+	}
+	if got.Author.Name != "ada" {
+		t.Errorf("Request.Decode(form).Author.Name = %q, want %q", got.Author.Name, "ada")
+	}
+	wantPublishedAt := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	if !got.PublishedAt.Equal(wantPublishedAt) {
+		t.Errorf("Request.Decode(form).PublishedAt = %v, want %v", got.PublishedAt, wantPublishedAt)
+	}
+	if got.Ignored != "" {
+		t.Errorf("Request.Decode(form).Ignored = %q, want empty", got.Ignored)
+	}
+}
+
+func TestDecodeFormRejectsUnknownFields(t *testing.T) {
+	var payload formPayload
+	err := decodeFormValues(url.Values{
+		"title":   []string{"hello"},
+		"unknown": []string{"value"},
+	}, &payload)
+	if err == nil {
+		t.Fatalf("decodeFormValues(values, payload) error = nil, want error")
+	}
+}
+
+func TestDecodeFormRejectsInvalidScalar(t *testing.T) {
+	var payload formPayload
+	err := decodeFormValues(url.Values{
+		"count": []string{"many"},
+	}, &payload)
+	if err == nil {
+		t.Fatalf("decodeFormValues(values, payload) error = nil, want error")
+	}
+}
+
+func TestDecodeFormCanReturnRawValues(t *testing.T) {
+	var payload url.Values
+	err := decodeFormValues(url.Values{
+		"tag": []string{"go", "html"},
+	}, &payload)
+	if err != nil {
+		t.Fatalf("decodeFormValues(values, url.Values) error = %v, want nil", err)
+	}
+	if len(payload["tag"]) != 2 || payload["tag"][0] != "go" || payload["tag"][1] != "html" {
+		t.Errorf("decodeFormValues(values, url.Values)[tag] = %#v, want %#v", payload["tag"], []string{"go", "html"})
 	}
 }
 
@@ -217,7 +287,18 @@ func (c *bindChild) Bind(*http.Request) error {
 }
 
 type formPayload struct {
-	Title string `form:"title" json:"title"`
+	Title       string    `form:"title" json:"title"`
+	Published   bool      `form:"published" json:"published"`
+	Count       int       `form:"count" json:"count"`
+	Tags        []string  `form:"tags" json:"tags"`
+	Page        *int      `form:"page" json:"page"`
+	Author      author    `form:"author" json:"author"`
+	PublishedAt time.Time `form:"published_at" json:"published_at"`
+	Ignored     string    `form:"-" json:"ignored"`
+}
+
+type author struct {
+	Name string `form:"name" json:"name"`
 }
 
 type renderPayload struct {

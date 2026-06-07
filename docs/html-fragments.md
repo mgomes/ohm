@@ -217,6 +217,11 @@ func PostsCreate(req *ohm.Request) error {
 The full-page response preserves non-JavaScript form behavior. The fragment
 response lets htmx replace only the form target.
 
+Ohm decodes `application/x-www-form-urlencoded` bodies into structs with
+`form` tags. Use scalar fields for ordinary controls, slices for repeated
+controls, pointers for optional values, and nested structs with dotted field
+names such as `author.name`.
+
 ## Response Headers
 
 Use the htmx adapter for htmx response headers instead of setting string
