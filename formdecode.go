@@ -132,6 +132,14 @@ func decodeFormStruct(values url.Values, target reflect.Value, prefix string, us
 			if err := decodeFormStruct(values, nested, key, used); err != nil {
 				return err
 			}
+			continue
+		}
+
+		if canDecodeNestedFormMap(field) && hasFormKeyPrefix(values, key+".") {
+			nested := dereferenceFormField(field)
+			if err := decodeFormMapPrefix(values, nested, key, used); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -179,6 +187,43 @@ func canDecodeNestedFormStruct(field reflect.Value) bool {
 		!formTypeHasTextUnmarshaler(field.Type()) &&
 		!field.Type().ConvertibleTo(formTimeType) &&
 		!field.Type().ConvertibleTo(formURLType)
+}
+
+func canDecodeNestedFormMap(field reflect.Value) bool {
+	for field.Kind() == reflect.Ptr {
+		field = reflect.New(field.Type().Elem()).Elem()
+	}
+	return field.Kind() == reflect.Map
+}
+
+func decodeFormMapPrefix(values url.Values, target reflect.Value, prefix string, used map[string]struct{}) error {
+	if target.Type().Key().Kind() != reflect.String {
+		return fmt.Errorf("form map field %q key type must be string", prefix)
+	}
+	if target.IsNil() {
+		target.Set(reflect.MakeMap(target.Type()))
+	}
+
+	fieldPrefix := prefix + "."
+	for key, raw := range values {
+		mapKeyName, ok := strings.CutPrefix(key, fieldPrefix)
+		if !ok {
+			continue
+		}
+		if mapKeyName == "" {
+			return fmt.Errorf("form map field %q has empty key", prefix)
+		}
+
+		mapValue := reflect.New(target.Type().Elem()).Elem()
+		if err := setFormField(mapValue, raw, key); err != nil {
+			return err
+		}
+
+		mapKey := reflect.ValueOf(mapKeyName).Convert(target.Type().Key())
+		target.SetMapIndex(mapKey, mapValue)
+		used[key] = struct{}{}
+	}
+	return nil
 }
 
 func dereferenceFormField(field reflect.Value) reflect.Value {

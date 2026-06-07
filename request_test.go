@@ -72,6 +72,8 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 		"tags=html",
 		"page=3",
 		"author.name=ada",
+		"prefs.theme=dark",
+		"prefs.locale=en-US",
 		"published_at=2026-06-07T12:30",
 	}, "&")))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -106,6 +108,12 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 	}
 	if got.Author.Name != "ada" {
 		t.Errorf("Request.Decode(form).Author.Name = %q, want %q", got.Author.Name, "ada")
+	}
+	if got.Preferences["theme"] != "dark" {
+		t.Errorf("Request.Decode(form).Preferences[theme] = %q, want %q", got.Preferences["theme"], "dark")
+	}
+	if got.Preferences["locale"] != "en-US" {
+		t.Errorf("Request.Decode(form).Preferences[locale] = %q, want %q", got.Preferences["locale"], "en-US")
 	}
 	wantPublishedAt := time.Date(2026, 6, 7, 12, 30, 0, 0, time.UTC)
 	if !got.PublishedAt.Equal(wantPublishedAt) {
@@ -287,14 +295,15 @@ func (c *bindChild) Bind(*http.Request) error {
 }
 
 type formPayload struct {
-	Title       string    `form:"title" json:"title"`
-	Published   bool      `form:"published" json:"published"`
-	Count       int       `form:"count" json:"count"`
-	Tags        []string  `form:"tags" json:"tags"`
-	Page        *int      `form:"page" json:"page"`
-	Author      author    `form:"author" json:"author"`
-	PublishedAt time.Time `form:"published_at" json:"published_at"`
-	Ignored     string    `form:"-" json:"ignored"`
+	Title       string            `form:"title" json:"title"`
+	Published   bool              `form:"published" json:"published"`
+	Count       int               `form:"count" json:"count"`
+	Tags        []string          `form:"tags" json:"tags"`
+	Page        *int              `form:"page" json:"page"`
+	Author      author            `form:"author" json:"author"`
+	Preferences map[string]string `form:"prefs" json:"prefs"`
+	PublishedAt time.Time         `form:"published_at" json:"published_at"`
+	Ignored     string            `form:"-" json:"ignored"`
 }
 
 type author struct {

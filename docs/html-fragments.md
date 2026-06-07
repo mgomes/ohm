@@ -220,7 +220,8 @@ response lets htmx replace only the form target.
 Ohm decodes `application/x-www-form-urlencoded` bodies into structs with
 `form` tags. Use scalar fields for ordinary controls, slices for repeated
 controls, pointers for optional values, and nested structs with dotted field
-names such as `author.name`.
+names such as `author.name`. Dynamic grouped fields can bind into map fields
+with dotted keys such as `prefs.theme`.
 
 ## Response Headers
 
