@@ -3,6 +3,7 @@ package ohm
 import (
 	"encoding"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -19,10 +20,16 @@ var (
 )
 
 func decodeForm(r *http.Request, v any) error {
-	if err := r.ParseForm(); err != nil {
-		return fmt.Errorf("parse form: %w", err)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return fmt.Errorf("read form body: %w", err)
 	}
-	return decodeFormValues(r.PostForm, v)
+
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return fmt.Errorf("parse form body: %w", err)
+	}
+	return decodeFormValues(values, v)
 }
 
 func decodeFormValues(values url.Values, dst any) error {

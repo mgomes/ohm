@@ -129,6 +129,36 @@ func TestRequestDecodeDecodesForm(t *testing.T) {
 	}
 }
 
+func TestRequestDecodeReadsFormBodyForAnyMethod(t *testing.T) {
+	app := New()
+	app.Delete("/posts/1", func(req *Request) error {
+		var payload formPayload
+		if err := req.Decode(&payload); err != nil {
+			return err
+		}
+		req.JSON(http.StatusOK, payload)
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/posts/1", strings.NewReader("title=removed"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+
+	var got formPayload
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("json.Decode(response body) error = %v, want nil", err)
+	}
+	if got.Title != "removed" {
+		t.Errorf("Request.Decode(form).Title = %q, want %q", got.Title, "removed")
+	}
+}
+
 func TestDecodeFormRejectsUnknownFields(t *testing.T) {
 	var payload formPayload
 	err := decodeFormValues(url.Values{
