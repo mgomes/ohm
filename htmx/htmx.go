@@ -7,8 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/a-h/templ"
-
 	"github.com/mgomes/ohm"
 )
 
@@ -165,15 +163,15 @@ func Render(req *ohm.Request, status int, view ohm.HTMLView, opts ...Option) err
 		return fmt.Errorf("htmx render request is required")
 	}
 	addVary(req.ResponseWriter(), HeaderRequest, HeaderTarget, HeaderHistoryRestoreRequest)
-	component, err := Select(req.HTTPRequest(), view, opts...)
+	html, err := Select(req.HTTPRequest(), view, opts...)
 	if err != nil {
 		return err
 	}
-	return req.HTML(status, component)
+	return req.HTML(status, html)
 }
 
-// Select returns the component that should satisfy r.
-func Select(r *http.Request, view ohm.HTMLView, opts ...Option) (templ.Component, error) {
+// Select returns the HTML that should satisfy r.
+func Select(r *http.Request, view ohm.HTMLView, opts ...Option) (ohm.HTML, error) {
 	if r == nil {
 		return nil, fmt.Errorf("htmx select request is required")
 	}
@@ -192,12 +190,12 @@ func Select(r *http.Request, view ohm.HTMLView, opts ...Option) (templ.Component
 		if !found {
 			return nil, unknownTargetError(target, view.Targets())
 		}
-		return fragment.Component(), nil
+		return fragment.HTML(), nil
 	}
 
 	if options.singleFragmentFallback {
 		if fragment, ok := view.SingleFragment(); ok {
-			return fragment.Component(), nil
+			return fragment.HTML(), nil
 		}
 	}
 

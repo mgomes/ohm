@@ -1,27 +1,23 @@
 package ohm
 
-import (
-	"slices"
-
-	"github.com/a-h/templ"
-)
+import "slices"
 
 // HTMLView describes a server-rendered HTML response with optional fragments.
 type HTMLView struct {
-	full      templ.Component
+	full      HTML
 	fragments []HTMLFragment
 }
 
 // View creates an HTMLView from a full response and optional named fragments.
-func View(full templ.Component, fragments ...HTMLFragment) HTMLView {
+func View(full HTML, fragments ...HTMLFragment) HTMLView {
 	return HTMLView{
 		full:      full,
 		fragments: slices.Clone(fragments),
 	}
 }
 
-// Full returns the component used for normal full-page rendering.
-func (v HTMLView) Full() templ.Component {
+// Full returns the HTML rendered for normal full-page responses.
+func (v HTMLView) Full() HTML {
 	return v.full
 }
 
@@ -59,15 +55,15 @@ func (v HTMLView) Targets() []string {
 
 // HTMLFragment describes a named HTML fragment for a page region.
 type HTMLFragment struct {
-	target    string
-	component templ.Component
+	target string
+	html   HTML
 }
 
 // Fragment creates an HTML fragment for target.
-func Fragment(target string, component templ.Component) HTMLFragment {
+func Fragment(target string, html HTML) HTMLFragment {
 	return HTMLFragment{
-		target:    target,
-		component: component,
+		target: target,
+		html:   html,
 	}
 }
 
@@ -76,7 +72,7 @@ func (f HTMLFragment) Target() string {
 	return f.target
 }
 
-// Component returns the templ component rendered for this fragment.
-func (f HTMLFragment) Component() templ.Component {
-	return f.component
+// HTML returns the HTML rendered for this fragment.
+func (f HTMLFragment) HTML() HTML {
+	return f.html
 }

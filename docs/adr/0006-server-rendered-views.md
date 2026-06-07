@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0012](0012-html-template-default-views.md) on 2026-06-07
 
 ## Context
 

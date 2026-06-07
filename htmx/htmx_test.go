@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a-h/templ"
-
 	"github.com/mgomes/ohm"
 	"github.com/mgomes/ohm/htmx"
 )
@@ -268,8 +266,8 @@ func newViewApp(t *testing.T, view ohm.HTMLView, opts ...htmx.Option) *ohm.App {
 	return app
 }
 
-func testComponent(text string) templ.Component {
-	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+func testComponent(text string) ohm.HTML {
+	return ohm.HTMLFunc(func(_ context.Context, w io.Writer) error {
 		_, err := io.WriteString(w, text)
 		return err
 	})

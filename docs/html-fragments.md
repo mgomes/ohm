@@ -4,11 +4,13 @@ Ohm supports server-rendered HTML fragments as a first-class view path. Use a
 full page for normal browser navigation and named fragments for enhanced
 interactions that update one page region.
 
-The core Ohm API is client-neutral:
+The core Ohm API is client-neutral and template-engine neutral:
 
+- `ohm.HTML` is the framework-owned renderable HTML interface.
+- `ohm.HTMLTemplate` adapts a named `html/template` template.
 - `ohm.View` declares the full page and its valid fragments.
-- `ohm.Fragment` names a page region and the component that renders it.
-- `Request.HTML` still renders any single `templ.Component` directly.
+- `ohm.Fragment` names a page region and the HTML that renders it.
+- `Request.HTML` renders any single `ohm.HTML` value directly.
 
 The `github.com/mgomes/ohm/htmx` package is the blessed htmx adapter. It reads
 htmx request headers, selects a matching fragment when the request target is
@@ -21,54 +23,85 @@ responses, not JSON, and htmx sends request headers such as `HX-Request`,
 [htmx documentation](https://htmx.org/docs/) and
 [htmx reference](https://htmx.org/reference/).
 
-## View directories
+## View Directories
 
 Generated applications organize server-rendered views like this:
 
 ```text
-internal/views/layouts/     full document wrappers
-internal/views/pages/       route-level full pages
-internal/views/partials/    route-addressable fragments
-internal/views/components/  smaller reusable view pieces
-internal/views/forms/       form helpers
-internal/views/assets/      asset path helpers
+internal/views/views.go                    template parsing and layout helpers
+internal/views/pages/                      typed page constructors
+internal/views/partials/                   typed fragment constructors
+internal/views/components/                 reusable HTML constructors
+internal/views/templates/layouts/          layout .html templates
+internal/views/templates/pages/            page body .html templates
+internal/views/templates/partials/         fragment .html templates
+internal/views/templates/components/       reusable .html templates
+internal/views/forms/                      form helpers
+internal/views/assets/                     asset path helpers
 ```
 
 Use `pages` for full screens and `partials` for regions that htmx can swap.
 Use `components` for reusable pieces with no route or target meaning.
 
-Do not copy Rails' leading-underscore partial names. Go ignores source files
-whose names begin with `_`, so names such as `_form.templ` will not behave like
-ordinary Go source. Use names such as `post_form.templ` or `posts_list.templ`.
+Do not copy Rails' leading-underscore partial names. Files beginning with `_`
+are easy to lose when embedded with Go's `embed` package. Use names such as
+`post_form.html` or `posts_list.html`.
 
-## Render a full page and a fragment
+## Render a Page and Partial
 
 A page should usually reuse its partial so both response paths share markup.
+With `html/template`, the partial call stays in the `.html` file:
 
-```templ
-// internal/views/pages/home.templ
+```html
+{{ define "pages/home" -}}
+{{ template "partials/home" . }}
+{{- end }}
+```
+
+```html
+{{ define "partials/home" -}}
+<section id="home">
+  <h1>Welcome to {{ .Title }}</h1>
+</section>
+{{- end }}
+```
+
+Small Go wrappers provide typed entry points for handlers:
+
+```go
 package pages
 
 import (
-	"example.com/journal/internal/views/layouts"
-	"example.com/journal/internal/views/partials"
+	"github.com/mgomes/ohm"
+
+	"example.com/journal/internal/views"
 )
 
-templ Home(title string) {
-	@layouts.Application(title) {
-		@partials.Home(title)
-	}
+type HomeData struct {
+	Title string
+}
+
+func Home(title string) ohm.HTML {
+	data := HomeData{Title: title}
+	return views.Page(title, views.Render("pages/home", data))
 }
 ```
 
-```templ
-// internal/views/partials/home.templ
+```go
 package partials
 
-templ Home(title string) {
-	<section id="home">
-		<h1>{ "Welcome to " + title }</h1>
-	</section>
+import (
+	"github.com/mgomes/ohm"
+
+	"example.com/journal/internal/views"
+)
+
+type HomeData struct {
+	Title string
+}
+
+func Home(title string) ohm.HTML {
+	return views.Render("partials/home", HomeData{Title: title})
 }
 ```
 
@@ -106,7 +139,7 @@ func Home(req *ohm.Request) error {
 htmx sends `HX-Target: home` for that request, and Ohm renders the fragment
 declared as `ohm.Fragment("home", partials.Home(title))`.
 
-## How htmx rendering chooses a response
+## Selection Policy
 
 `htmx.Render` is intentionally conservative:
 
@@ -132,7 +165,7 @@ return htmx.Render(req, http.StatusOK, ohm.View(
 Use the fallback sparingly. Prefer explicit htmx targets when the page has more
 than one replaceable region or when the route may be used by boosted navigation.
 
-## Multiple fragments
+## Multiple Fragments
 
 A single route can declare multiple valid fragments from the same loaded data.
 
@@ -153,11 +186,11 @@ An htmx request for target `comments` gets only the comments fragment. A request
 for target `activity` gets only the activity fragment. A normal request gets the
 full page.
 
-## Forms and validation errors
+## Forms and Validation
 
 For forms, keep the full-page and partial paths together. On validation failure,
 return the same status for both paths and let `htmx.Render` select the right
-component.
+HTML.
 
 ```go
 func PostsCreate(req *ohm.Request) error {
@@ -183,7 +216,7 @@ func PostsCreate(req *ohm.Request) error {
 The full-page response preserves non-JavaScript form behavior. The fragment
 response lets htmx replace only the form target.
 
-## Response headers
+## Response Headers
 
 Use the htmx adapter for htmx response headers instead of setting string
 headers throughout handlers.
@@ -269,7 +302,7 @@ Also test unknown targets when a route has multiple fragments. That verifies the
 public target contract instead of only checking that the handler returns some
 HTML.
 
-## Common mistakes
+## Common Mistakes
 
 ### Returning fragments for every htmx request
 
@@ -292,5 +325,5 @@ to find and test.
 ### Renaming targets casually
 
 Fragment target names are part of the public HTML contract. Renaming `"comments"`
-to `"post-comments"` can break existing markup even when the Go compiler is
-happy. Update htmx attributes and tests together.
+to `"post-comments"` can break existing markup even when Go code still compiles.
+Update htmx attributes and tests together.

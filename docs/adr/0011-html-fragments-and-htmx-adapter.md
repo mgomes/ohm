@@ -7,8 +7,8 @@ Accepted
 ## Context
 
 Ohm already treats server-rendered HTML as a first-class application path. ADR
-0006 selected `templ` as the preferred view system and established generated
-view directories for layouts, pages, and components.
+0012 supersedes ADR 0006 and selects the standard library `html/template`
+package as the default view system.
 
 Applications built with Ohm should be able to use progressive enhancement:
 ordinary browser requests should receive full HTML documents, while enhanced
@@ -23,9 +23,9 @@ and fragment endpoints, and without making the Ohm core permanently shaped by
 one client-side library.
 
 Rails-style partials are a useful mental model, but Ohm should not copy Rails'
-file naming directly. Go ignores source files whose names begin with `_`, so
-leading-underscore partial names would be surprising and fragile in a `templ`
-codebase.
+file naming directly. Files beginning with `_` are easy to lose when embedded
+with Go's `embed` package, so leading-underscore partial names would be
+surprising and fragile.
 
 ## Decision
 
@@ -34,9 +34,9 @@ separate htmx adapter as a blessed integration path.
 
 The core framework owns the generic model:
 
-- A full HTML response is a `templ.Component` intended to render a complete page
+- A full HTML response is an `ohm.HTML` value intended to render a complete page
   or layout-wrapped screen.
-- An HTML fragment is a `templ.Component` intended to update a named page region.
+- An HTML fragment is an `ohm.HTML` value intended to update a named page region.
 - Handlers should be able to declare a full response and one or more named
   fragments from the same view model.
 
@@ -47,10 +47,14 @@ fall back to the full response when a full document is required.
 The generated application layout should grow a dedicated partials directory:
 
 ```text
-internal/views/layouts/
+internal/views/views.go
 internal/views/pages/
 internal/views/partials/
 internal/views/components/
+internal/views/templates/layouts/
+internal/views/templates/pages/
+internal/views/templates/partials/
+internal/views/templates/components/
 ```
 
 `pages` remain full screens. `partials` are route-addressable fragments with
@@ -76,7 +80,7 @@ triggers. Those helpers belong in the adapter package, not on `ohm.Request`.
 
 - Make Ohm an htmx-only framework.
 - Add htmx-specific methods to `ohm.Request`.
-- Replace `templ` with a custom template language.
+- Add a custom template language.
 - Copy Rails' leading-underscore partial file naming.
 - Require separate routes for every fragment.
 
@@ -88,8 +92,8 @@ but the same full-response-plus-fragments model can support other adapters or
 application-specific negotiation later.
 
 Handlers stay explicit: they choose the full page and the valid fragments, pass
-typed data into both, and return through Ohm's response boundary. This preserves
-the compile-time feedback and directness from ADR 0006.
+typed data into both, and return through Ohm's response boundary. The root
+package stays independent from any one view engine.
 
 Direct navigation remains reliable. The framework does not assume that every
 enhanced request wants a fragment, which avoids returning partial HTML during
@@ -133,6 +137,7 @@ data.
 ## References
 
 - [ADR 0006: Server-rendered views](0006-server-rendered-views.md).
+- [ADR 0012: Use html/template for default views](0012-html-template-default-views.md).
 - [htmx documentation](https://htmx.org/docs/).
 - [htmx reference](https://htmx.org/reference/).
 

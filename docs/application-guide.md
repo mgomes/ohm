@@ -8,7 +8,7 @@ The generated layout is:
 cmd/myapp/          CLI entrypoint
 internal/app/       app wiring, logger, router, and dependencies
 internal/handlers/  HTTP handlers
-internal/views/     templ views, layouts, pages, partials, components, forms, and assets
+internal/views/     HTML templates, pages, partials, components, forms, and assets
 internal/services/  business workflows
 internal/db/        database connection, migrations, seeds, and generated queries
 migrations/         goose migration files
@@ -73,21 +73,27 @@ Do not put long workflows in handlers. Put those in `internal/services`.
 
 ## Views
 
-Ohm uses `templ` for server-rendered HTML.
+Ohm uses the standard library `html/template` package for server-rendered HTML.
 
 Generated views live under:
 
 ```text
-internal/views/layouts/
+internal/views/views.go
 internal/views/pages/
 internal/views/partials/
 internal/views/components/
+internal/views/templates/layouts/
+internal/views/templates/pages/
+internal/views/templates/partials/
+internal/views/templates/components/
 internal/views/forms/
 internal/views/assets/
 ```
 
-Render pages explicitly from handlers. Pass typed data into views. Use JSON
-responses when an endpoint should return JSON.
+The `.html` files hold the markup. The Go packages next to them provide typed
+constructors that return `ohm.HTML` values for handlers. Render pages explicitly
+from handlers. Pass typed data into views. Use JSON responses when an endpoint
+should return JSON.
 
 HTML is the default path, not the only path.
 
@@ -210,7 +216,7 @@ just test-integration
 just check
 ```
 
-`just check` regenerates templ and sqlc output, then runs formatting checks,
+`just check` regenerates sqlc output, then runs formatting checks,
 module tidiness checks, vet, and tests.
 
 Tests that require a database make that requirement explicit.

@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/a-h/templ"
 )
 
 func TestViewStoresFullComponentAndFragments(t *testing.T) {
@@ -17,8 +15,8 @@ func TestViewStoresFullComponentAndFragments(t *testing.T) {
 
 	view := View(full, posts, comments)
 
-	if got := renderTestComponent(t, view.Full()); got != "full" {
-		t.Errorf("View(full, fragments...).Full().Render(ctx, w) = %q, want %q", got, "full")
+	if got := renderTestHTML(t, view.Full()); got != "full" {
+		t.Errorf("View(full, fragments...).Full().RenderHTML(ctx, w) = %q, want %q", got, "full")
 	}
 
 	gotPosts, ok := view.Fragment("posts")
@@ -28,8 +26,8 @@ func TestViewStoresFullComponentAndFragments(t *testing.T) {
 	if gotPosts.Target() != "posts" {
 		t.Errorf("View(full, fragments...).Fragment(%q).Target() = %q, want %q", "posts", gotPosts.Target(), "posts")
 	}
-	if got := renderTestComponent(t, gotPosts.Component()); got != "posts" {
-		t.Errorf("View(full, fragments...).Fragment(%q).Component().Render(ctx, w) = %q, want %q", "posts", got, "posts")
+	if got := renderTestHTML(t, gotPosts.HTML()); got != "posts" {
+		t.Errorf("View(full, fragments...).Fragment(%q).HTML().RenderHTML(ctx, w) = %q, want %q", "posts", got, "posts")
 	}
 
 	if _, ok := view.Fragment("missing"); ok {
@@ -83,19 +81,19 @@ func TestViewSingleFragment(t *testing.T) {
 	}
 }
 
-func testHTMLComponent(text string) templ.Component {
-	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+func testHTMLComponent(text string) HTML {
+	return HTMLFunc(func(_ context.Context, w io.Writer) error {
 		_, err := io.WriteString(w, text)
 		return err
 	})
 }
 
-func renderTestComponent(t *testing.T, component templ.Component) string {
+func renderTestHTML(t *testing.T, html HTML) string {
 	t.Helper()
 
 	var body strings.Builder
-	if err := component.Render(context.Background(), &body); err != nil {
-		t.Fatalf("component.Render(ctx, w) error = %v, want nil", err)
+	if err := html.RenderHTML(context.Background(), &body); err != nil {
+		t.Fatalf("html.RenderHTML(ctx, w) error = %v, want nil", err)
 	}
 	return body.String()
 }
