@@ -77,7 +77,7 @@ func decodeFormMap(values url.Values, target reflect.Value) error {
 	switch target.Type().Elem().Kind() {
 	case reflect.String:
 		for key, raw := range values {
-			mapKey := reflect.ValueOf(key).Convert(target.Type().Key())
+			mapKey := reflect.ValueOf(unescapeFormKeySegment(key)).Convert(target.Type().Key())
 			mapValue := reflect.ValueOf(lastFormValue(raw)).Convert(target.Type().Elem())
 			target.SetMapIndex(mapKey, mapValue)
 		}
@@ -92,7 +92,7 @@ func decodeFormMap(values url.Values, target reflect.Value) error {
 			for i, item := range raw {
 				copied.Index(i).SetString(item)
 			}
-			mapKey := reflect.ValueOf(key).Convert(target.Type().Key())
+			mapKey := reflect.ValueOf(unescapeFormKeySegment(key)).Convert(target.Type().Key())
 			target.SetMapIndex(mapKey, copied)
 		}
 		return nil
@@ -176,10 +176,36 @@ func formFieldName(field reflect.StructField) (string, bool) {
 }
 
 func joinFormKey(prefix string, name string) string {
+	name = escapeFormKeySegment(name)
 	if prefix == "" {
 		return name
 	}
 	return prefix + "." + name
+}
+
+func splitFormKey(path string) (string, string) {
+	escaped := false
+	for i, r := range path {
+		switch {
+		case !escaped && r == '\\':
+			escaped = true
+		case !escaped && r == '.':
+			return unescapeFormKeySegment(path[:i]), path[i+1:]
+		default:
+			escaped = false
+		}
+	}
+	return unescapeFormKeySegment(path), ""
+}
+
+func escapeFormKeySegment(segment string) string {
+	segment = strings.ReplaceAll(segment, `\`, `\\`)
+	return strings.ReplaceAll(segment, `.`, `\.`)
+}
+
+func unescapeFormKeySegment(segment string) string {
+	segment = strings.ReplaceAll(segment, `\.`, `.`)
+	return strings.ReplaceAll(segment, `\\`, `\`)
 }
 
 func hasFormKeyPrefix(values url.Values, prefix string) bool {
@@ -234,7 +260,7 @@ func decodeFormMapPrefix(values url.Values, target reflect.Value, prefix string,
 			return err
 		}
 
-		mapKey := reflect.ValueOf(mapKeyName).Convert(target.Type().Key())
+		mapKey := reflect.ValueOf(unescapeFormKeySegment(mapKeyName)).Convert(target.Type().Key())
 		target.SetMapIndex(mapKey, mapValue)
 		used[key] = struct{}{}
 	}
@@ -261,7 +287,7 @@ func decodeFormIndexedField(values url.Values, target reflect.Value, prefix stri
 			continue
 		}
 
-		indexText, rest, _ := strings.Cut(suffix, ".")
+		indexText, rest := splitFormKey(suffix)
 		index, err := strconv.Atoi(indexText)
 		if err != nil || index < 0 {
 			return fmt.Errorf("form field %q has invalid index %q", prefix, indexText)

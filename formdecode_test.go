@@ -17,8 +17,10 @@ func (t *formToken) UnmarshalText(text []byte) error {
 func TestDecodeFormDecodesTopLevelStringMap(t *testing.T) {
 	var payload map[string]string
 	values := url.Values{
-		"title": []string{"first", "last"},
-		"empty": []string{},
+		"title":      []string{"first", "last"},
+		"empty":      []string{},
+		`foo\.bar`:   []string{"dot"},
+		`path\\name`: []string{"slash"},
 	}
 	err := decodeFormValues(values, &payload)
 	if err != nil {
@@ -30,12 +32,19 @@ func TestDecodeFormDecodesTopLevelStringMap(t *testing.T) {
 	if payload["empty"] != "" {
 		t.Errorf("decodeFormValues(%v, map[string]string)[empty] = %q, want empty", values, payload["empty"])
 	}
+	if payload["foo.bar"] != "dot" {
+		t.Errorf("decodeFormValues(%v, map[string]string)[foo.bar] = %q, want %q", values, payload["foo.bar"], "dot")
+	}
+	if payload[`path\name`] != "slash" {
+		t.Errorf("decodeFormValues(%v, map[string]string)[path\\name] = %q, want %q", values, payload[`path\name`], "slash")
+	}
 }
 
 func TestDecodeFormDecodesTopLevelStringSliceMap(t *testing.T) {
 	var payload map[string][]string
 	values := url.Values{
-		"tag": []string{"go", "html"},
+		"tag":      []string{"go", "html"},
+		`foo\.bar`: []string{"dot", "again"},
 	}
 	err := decodeFormValues(values, &payload)
 	if err != nil {
@@ -43,6 +52,9 @@ func TestDecodeFormDecodesTopLevelStringSliceMap(t *testing.T) {
 	}
 	if len(payload["tag"]) != 2 || payload["tag"][0] != "go" || payload["tag"][1] != "html" {
 		t.Errorf("decodeFormValues(%v, map[string][]string)[tag] = %#v, want %#v", values, payload["tag"], []string{"go", "html"})
+	}
+	if len(payload["foo.bar"]) != 2 || payload["foo.bar"][0] != "dot" || payload["foo.bar"][1] != "again" {
+		t.Errorf("decodeFormValues(%v, map[string][]string)[foo.bar] = %#v, want %#v", values, payload["foo.bar"], []string{"dot", "again"})
 	}
 }
 
@@ -119,6 +131,51 @@ func TestDecodeFormDecodesIndexedArraysAndNestedValues(t *testing.T) {
 	}
 	if len(payload.Meta) != 1 || payload.Meta[0]["role"] != "admin" {
 		t.Errorf("decodeFormValues(%v, payload).Meta = %#v, want role admin", values, payload.Meta)
+	}
+}
+
+func TestDecodeFormPreservesEscapedDottedStructPaths(t *testing.T) {
+	var payload struct {
+		Group struct {
+			Name string `form:"name"`
+		} `form:"foo.bar"`
+		Path struct {
+			Name string `form:"name"`
+		} `form:"path\\name"`
+	}
+	values := url.Values{
+		`foo\.bar.name`:   []string{"dot"},
+		`path\\name.name`: []string{"slash"},
+	}
+	err := decodeFormValues(values, &payload)
+	if err != nil {
+		t.Fatalf("decodeFormValues(%v, payload) error = %v, want nil", values, err)
+	}
+	if payload.Group.Name != "dot" {
+		t.Errorf("decodeFormValues(%v, payload).Group.Name = %q, want %q", values, payload.Group.Name, "dot")
+	}
+	if payload.Path.Name != "slash" {
+		t.Errorf("decodeFormValues(%v, payload).Path.Name = %q, want %q", values, payload.Path.Name, "slash")
+	}
+}
+
+func TestDecodeFormPreservesEscapedDottedMapKeys(t *testing.T) {
+	var payload struct {
+		Preferences map[string]string `form:"prefs"`
+	}
+	values := url.Values{
+		`prefs.foo\.bar`:   []string{"dot"},
+		`prefs.path\\name`: []string{"slash"},
+	}
+	err := decodeFormValues(values, &payload)
+	if err != nil {
+		t.Fatalf("decodeFormValues(%v, payload) error = %v, want nil", values, err)
+	}
+	if payload.Preferences["foo.bar"] != "dot" {
+		t.Errorf("decodeFormValues(%v, payload).Preferences[foo.bar] = %q, want %q", values, payload.Preferences["foo.bar"], "dot")
+	}
+	if payload.Preferences[`path\name`] != "slash" {
+		t.Errorf("decodeFormValues(%v, payload).Preferences[path\\name] = %q, want %q", values, payload.Preferences[`path\name`], "slash")
 	}
 }
 
