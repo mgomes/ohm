@@ -164,6 +164,7 @@ func Render(req *ohm.Request, status int, view ohm.HTMLView, opts ...Option) err
 	if req == nil {
 		return fmt.Errorf("htmx render request is required")
 	}
+	addVary(req.ResponseWriter(), HeaderRequest, HeaderTarget, HeaderHistoryRestoreRequest)
 	component, err := Select(req.HTTPRequest(), view, opts...)
 	if err != nil {
 		return err
@@ -305,4 +306,34 @@ func setHeader(w http.ResponseWriter, key string, value string) {
 		return
 	}
 	w.Header().Set(key, value)
+}
+
+func addVary(w http.ResponseWriter, headers ...string) {
+	if w == nil {
+		return
+	}
+
+	existing := varyHeaderSet(w.Header().Values("Vary"))
+	for _, header := range headers {
+		canonical := http.CanonicalHeaderKey(header)
+		if canonical == "" || existing[canonical] {
+			continue
+		}
+		w.Header().Add("Vary", canonical)
+		existing[canonical] = true
+	}
+}
+
+func varyHeaderSet(values []string) map[string]bool {
+	headers := make(map[string]bool)
+	for _, value := range values {
+		for part := range strings.SplitSeq(value, ",") {
+			header := http.CanonicalHeaderKey(strings.TrimSpace(part))
+			if header == "" {
+				continue
+			}
+			headers[header] = true
+		}
+	}
+	return headers
 }

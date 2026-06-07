@@ -34,6 +34,27 @@ func TestRenderUsesFullViewForNormalRequest(t *testing.T) {
 	}
 }
 
+func TestRenderSetsVaryHeaders(t *testing.T) {
+	app := ohm.New()
+	app.Get("/", func(req *ohm.Request) error {
+		req.ResponseWriter().Header().Set("Vary", "Accept, HX-Request")
+		return htmx.Render(req, http.StatusOK, ohm.View(
+			testComponent("full"),
+			ohm.Fragment("posts", testComponent("fragment")),
+		))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+	assertVary(t, response.Header(), "Accept", htmx.HeaderRequest, htmx.HeaderTarget, htmx.HeaderHistoryRestoreRequest)
+}
+
 func TestRenderUsesFragmentForMatchingTarget(t *testing.T) {
 	app := newViewApp(t, ohm.View(
 		testComponent("full"),
@@ -144,6 +165,7 @@ func TestRenderRejectsUnknownTarget(t *testing.T) {
 	if got := response.Body.String(); got != "unknown htmx target" {
 		t.Errorf("htmx.Render(unknown target) body = %q, want public error message", got)
 	}
+	assertVary(t, response.Header(), htmx.HeaderRequest, htmx.HeaderTarget, htmx.HeaderHistoryRestoreRequest)
 	if !errors.Is(gotErr, htmx.ErrUnknownTarget) {
 		t.Errorf("htmx.Render(unknown target) error = %v, want %v", gotErr, htmx.ErrUnknownTarget)
 	}
@@ -251,4 +273,26 @@ func testComponent(text string) templ.Component {
 		_, err := io.WriteString(w, text)
 		return err
 	})
+}
+
+func assertVary(t *testing.T, header http.Header, wants ...string) {
+	t.Helper()
+
+	counts := make(map[string]int)
+	for _, value := range header.Values("Vary") {
+		for part := range strings.SplitSeq(value, ",") {
+			name := http.CanonicalHeaderKey(strings.TrimSpace(part))
+			if name == "" {
+				continue
+			}
+			counts[name]++
+		}
+	}
+
+	for _, want := range wants {
+		name := http.CanonicalHeaderKey(want)
+		if counts[name] != 1 {
+			t.Errorf("Vary header count for %s = %d, want 1 in %v", name, counts[name], header.Values("Vary"))
+		}
+	}
 }
