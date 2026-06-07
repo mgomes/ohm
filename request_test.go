@@ -159,6 +159,20 @@ func TestRequestDecodeReadsFormBodyForAnyMethod(t *testing.T) {
 	}
 }
 
+func TestDecodeFormDecodesIndexedSlices(t *testing.T) {
+	var payload formPayload
+	err := decodeFormValues(url.Values{
+		"tags.0": []string{"go"},
+		"tags.1": []string{"html"},
+	}, &payload)
+	if err != nil {
+		t.Fatalf("decodeFormValues(values, payload) error = %v, want nil", err)
+	}
+	if len(payload.Tags) != 2 || payload.Tags[0] != "go" || payload.Tags[1] != "html" {
+		t.Errorf("decodeFormValues(values, payload).Tags = %#v, want %#v", payload.Tags, []string{"go", "html"})
+	}
+}
+
 func TestDecodeFormRejectsUnknownFields(t *testing.T) {
 	var payload formPayload
 	err := decodeFormValues(url.Values{

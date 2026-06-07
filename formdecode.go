@@ -147,6 +147,14 @@ func decodeFormStruct(values url.Values, target reflect.Value, prefix string, us
 			if err := decodeFormMapPrefix(values, nested, key, used); err != nil {
 				return err
 			}
+			continue
+		}
+
+		if canDecodeIndexedFormField(field) && hasFormKeyPrefix(values, key+".") {
+			indexed := dereferenceFormField(field)
+			if err := decodeFormIndexedField(values, indexed, key, used); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -231,6 +239,87 @@ func decodeFormMapPrefix(values url.Values, target reflect.Value, prefix string,
 		used[key] = struct{}{}
 	}
 	return nil
+}
+
+func canDecodeIndexedFormField(field reflect.Value) bool {
+	for field.Kind() == reflect.Ptr {
+		field = reflect.New(field.Type().Elem()).Elem()
+	}
+	return field.Kind() == reflect.Slice || field.Kind() == reflect.Array
+}
+
+func decodeFormIndexedField(values url.Values, target reflect.Value, prefix string, used map[string]struct{}) error {
+	if target.Kind() != reflect.Slice && target.Kind() != reflect.Array {
+		return fmt.Errorf("form field %q must be a slice or array", prefix)
+	}
+
+	fieldPrefix := prefix + "."
+	nestedIndexes := map[int]struct{}{}
+	for key, raw := range values {
+		suffix, ok := strings.CutPrefix(key, fieldPrefix)
+		if !ok {
+			continue
+		}
+
+		indexText, rest, _ := strings.Cut(suffix, ".")
+		index, err := strconv.Atoi(indexText)
+		if err != nil || index < 0 {
+			return fmt.Errorf("form field %q has invalid index %q", prefix, indexText)
+		}
+
+		elem, err := indexedFormElement(target, index, prefix)
+		if err != nil {
+			return err
+		}
+		if rest == "" {
+			if err := setFormField(elem, raw, key); err != nil {
+				return err
+			}
+			used[key] = struct{}{}
+			continue
+		}
+		nestedIndexes[index] = struct{}{}
+	}
+
+	for index := range nestedIndexes {
+		elem, err := indexedFormElement(target, index, prefix)
+		if err != nil {
+			return err
+		}
+		childPrefix := prefix + "." + strconv.Itoa(index)
+		switch {
+		case canDecodeNestedFormStruct(elem):
+			if err := decodeFormStruct(values, dereferenceFormField(elem), childPrefix, used); err != nil {
+				return err
+			}
+		case canDecodeNestedFormMap(elem):
+			if err := decodeFormMapPrefix(values, dereferenceFormField(elem), childPrefix, used); err != nil {
+				return err
+			}
+		case canDecodeIndexedFormField(elem):
+			if err := decodeFormIndexedField(values, dereferenceFormField(elem), childPrefix, used); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("form field %q does not support nested indexed values", childPrefix)
+		}
+	}
+	return nil
+}
+
+func indexedFormElement(target reflect.Value, index int, name string) (reflect.Value, error) {
+	if target.Kind() == reflect.Array {
+		if index >= target.Len() {
+			return reflect.Value{}, fmt.Errorf("form field %q index %d is above array size %d", name, index, target.Len())
+		}
+		return target.Index(index), nil
+	}
+
+	if index >= target.Len() {
+		extra := reflect.MakeSlice(target.Type(), index-target.Len()+1, index-target.Len()+1)
+		target.Set(reflect.AppendSlice(target, extra))
+	}
+	return target.Index(index), nil
 }
 
 func dereferenceFormField(field reflect.Value) reflect.Value {
