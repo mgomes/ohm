@@ -96,6 +96,7 @@ go run ./cmd/journal replay ./tmp/replays/request.json
 
 - [Getting started](docs/getting-started.md)
 - [Application guide](docs/application-guide.md)
+- [HTML fragments and htmx](docs/html-fragments.md)
 - [Observability](docs/observability.md)
 - [Release guide](docs/releasing.md)
 - [Architecture decisions](docs/adr)

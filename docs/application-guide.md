@@ -130,6 +130,9 @@ the full page so direct navigation and browser history keep working.
 Fragment target names are part of your HTML contract. Keep them stable and test
 the target-aware path when a route supports htmx.
 
+See [HTML fragments and htmx](html-fragments.md) for form handling, response
+headers, multi-fragment routes, and testing patterns.
+
 ## Config
 
 Ohm includes a small `.env` loader and typed config decoder.
