@@ -353,7 +353,10 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(formHelper, `type Field struct`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/forms/forms.go = %q, want form field helper", formHelper)
 	}
-	if !strings.Contains(formHelper, `func NewField(name string, label string, values Values, errors Errors) Field`) {
+	if !strings.Contains(formHelper, `type FieldErrors interface`) {
+		t.Errorf("GenerateApp(sqlite app) internal/views/forms/forms.go = %q, want field errors interface", formHelper)
+	}
+	if !strings.Contains(formHelper, `func NewField(name string, label string, values Values, errors FieldErrors) Field`) {
 		t.Errorf("GenerateApp(sqlite app) internal/views/forms/forms.go = %q, want form field constructor", formHelper)
 	}
 
