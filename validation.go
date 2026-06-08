@@ -318,7 +318,7 @@ func (v StringValidation) Min(n int) StringValidation {
 
 // Max requires at most n characters.
 func (v StringValidation) Max(n int) StringValidation {
-	if n < 0 {
+	if n < 0 || strings.TrimSpace(v.value) == "" {
 		return v
 	}
 	if utf8.RuneCountInString(v.value) > n {

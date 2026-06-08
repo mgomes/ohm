@@ -73,6 +73,7 @@ func TestValidationStringRules(t *testing.T) {
 	validation.String("short", "Go").Length(3, 5)
 	validation.String("long", "Gophers").Length(3, 5)
 	validation.String("unicode", "åß").Min(3)
+	validation.String("optional_blank", "           ").Max(3)
 
 	errs := validation.Errors()
 
