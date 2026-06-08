@@ -180,6 +180,9 @@ func TestValidationErrorsCanBeInspectedAndCloned(t *testing.T) {
 	if err := (Errors{}).Err(); err != nil {
 		t.Errorf("empty validation Errors.Err() = %v, want nil", err)
 	}
+	if errors.Is(Errors{}, ErrValidation) {
+		t.Errorf("errors.Is(empty validation Errors, ErrValidation) = true, want false")
+	}
 	if got := errs.Error(); got != "validation failed" {
 		t.Errorf("validation.Errors().Error() = %q, want %q", got, "validation failed")
 	}

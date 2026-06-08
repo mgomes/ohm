@@ -208,7 +208,7 @@ func (e Errors) Err() error {
 
 // Is reports whether e matches ErrValidation.
 func (e Errors) Is(target error) bool {
-	return target == ErrValidation
+	return e.Any() && target == ErrValidation
 }
 
 // All returns a copy of all validation errors.
