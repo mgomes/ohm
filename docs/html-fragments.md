@@ -196,8 +196,13 @@ HTML.
 ```go
 func PostsCreate(req *ohm.Request) error {
 	var form PostForm
-	if err := req.Bind(&form); err != nil {
-		view := PostFormView{Form: form, Errors: validationErrors(err)}
+	if err := req.Decode(&form); err != nil {
+		return err
+	}
+
+	errs := ohm.Validate(form)
+	if errs.Any() {
+		view := PostFormView{Form: form, Errors: errs}
 		return htmx.Render(req, http.StatusUnprocessableEntity, ohm.View(
 			pages.PostsNew(view),
 			ohm.Fragment("post-form", partials.PostForm(view)),
@@ -222,6 +227,9 @@ Ohm decodes `application/x-www-form-urlencoded` bodies into structs with
 controls, pointers for optional values, and nested structs with dotted field
 names such as `author.name`. Dynamic grouped fields can bind into map fields
 with dotted keys such as `prefs.theme`.
+
+See [Validations](validation.md) for the `Validate(*ohm.Validation)` form
+contract, field errors, and JSON error responses.
 
 ## Response Headers
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed on 2026-06-07
+Accepted on 2026-06-07
 
 ## Context
 
@@ -51,7 +51,7 @@ Handlers validate after decoding:
 
 ```go
 var form PostForm
-if err := req.Bind(&form); err != nil {
+if err := req.Decode(&form); err != nil {
 	return err
 }
 

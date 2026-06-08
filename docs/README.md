@@ -5,6 +5,7 @@ Start here:
 - [Getting started](getting-started.md)
 - [Application guide](application-guide.md)
 - [HTML fragments and htmx](html-fragments.md)
+- [Validations](validation.md)
 - [Observability](observability.md)
 - [Release guide](releasing.md)
 - [Architecture decisions](adr)
