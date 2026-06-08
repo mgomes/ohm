@@ -135,12 +135,18 @@ func (v *Validation) Time(field string, value time.Time) TimeValidation {
 func (v *Validation) Slice(field string, value any) SliceValidation {
 	validation := SliceValidation{validation: v, field: field}
 	if value == nil {
+		validation.valid = true
 		return validation
 	}
 
 	reflected := reflect.ValueOf(value)
 	for reflected.Kind() == reflect.Ptr {
 		if reflected.IsNil() {
+			if typeIsSliceOrArray(reflected.Type().Elem()) {
+				validation.valid = true
+			} else {
+				validation.invalid()
+			}
 			return validation
 		}
 		reflected = reflected.Elem()
@@ -154,6 +160,13 @@ func (v *Validation) Slice(field string, value any) SliceValidation {
 		validation.invalid()
 	}
 	return validation
+}
+
+func typeIsSliceOrArray(t reflect.Type) bool {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return t.Kind() == reflect.Slice || t.Kind() == reflect.Array
 }
 
 func (v *Validation) fieldPath(field string) string {

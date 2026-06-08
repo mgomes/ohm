@@ -105,16 +105,22 @@ func TestValidationIntBoolTimeAndSliceRules(t *testing.T) {
 	validation.Time("ends_at", time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)).
 		Before(beforeBoundary)
 	var nilTags []string
+	var nilTagPointer *[]string
+	var nilCodePointer *[2]string
+	var invalidPointer *string
 	validation.Slice("empty", []string{}).Presence()
 	validation.Slice("nil_tags", nilTags).Presence()
+	validation.Slice("nil_tag_pointer", nilTagPointer).Presence()
+	validation.Slice("nil_code_pointer", nilCodePointer).Presence()
 	validation.Slice("few", []int{1}).Min(2)
 	validation.Slice("many", [3]int{1, 2, 3}).Max(2)
 	validation.Slice("invalid", "not a slice").Min(1)
+	validation.Slice("invalid_pointer", invalidPointer).Presence()
 
 	errs := validation.Errors()
 
-	if errs.Len() != 14 {
-		t.Fatalf("validation.Errors().Len() = %d, want %d with errors %#v", errs.Len(), 14, errs.All())
+	if errs.Len() != 17 {
+		t.Fatalf("validation.Errors().Len() = %d, want %d with errors %#v", errs.Len(), 17, errs.All())
 	}
 	small := requireValidationError(t, errs, "small", ValidationCodeTooSmall)
 	if value, ok := small.Param("min"); !ok || value != "3" {
@@ -139,9 +145,12 @@ func TestValidationIntBoolTimeAndSliceRules(t *testing.T) {
 	}
 	requireValidationError(t, errs, "empty", ValidationCodeTooShort)
 	requireValidationError(t, errs, "nil_tags", ValidationCodeTooShort)
+	requireValidationError(t, errs, "nil_tag_pointer", ValidationCodeTooShort)
+	requireValidationError(t, errs, "nil_code_pointer", ValidationCodeTooShort)
 	requireValidationError(t, errs, "few", ValidationCodeTooShort)
 	requireValidationError(t, errs, "many", ValidationCodeTooLong)
 	requireValidationError(t, errs, "invalid", ValidationCodeInvalid)
+	requireValidationError(t, errs, "invalid_pointer", ValidationCodeInvalid)
 }
 
 func TestValidationNestedSkipsNilValues(t *testing.T) {
