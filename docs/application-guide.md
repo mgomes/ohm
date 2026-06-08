@@ -166,7 +166,12 @@ func PostsCreate(req *ohm.Request) error {
 		))
 	}
 
-	return createPost(req.Context(), form)
+	if err := createPost(req.Context(), form); err != nil {
+		return err
+	}
+
+	req.Redirect(http.StatusSeeOther, "/posts")
+	return nil
 }
 ```
 
