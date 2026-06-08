@@ -14,6 +14,7 @@ It gives you the shape of a complete web app without hiding Go:
 - An app-owned CLI for serving, routing, migrating, seeding, and replaying.
 - Routing behind a small Ohm handler layer.
 - `html/template` views for pages, partials, layouts, components, forms, and errors.
+- Go-native form validations with structured field errors.
 - A blessed htmx adapter for target-aware server-rendered fragments.
 - Typed config backed by deterministic `.env` loading.
 - `sqlc` queries and `goose` migrations instead of an ORM.
@@ -97,6 +98,7 @@ go run ./cmd/journal replay ./tmp/replays/request.json
 - [Getting started](docs/getting-started.md)
 - [Application guide](docs/application-guide.md)
 - [HTML fragments and htmx](docs/html-fragments.md)
+- [Validations](docs/validation.md)
 - [Observability](docs/observability.md)
 - [Release guide](docs/releasing.md)
 - [Architecture decisions](docs/adr)

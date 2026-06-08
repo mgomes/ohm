@@ -350,6 +350,10 @@ import (
 
 type Values map[string]string
 
+type FieldErrors interface {
+	Messages(name string) []string
+}
+
 type Errors map[string][]string
 
 type Field struct {
@@ -360,7 +364,7 @@ type Field struct {
 	Errors []string
 }
 
-func NewField(name string, label string, values Values, errors Errors) Field {
+func NewField(name string, label string, values Values, errors FieldErrors) Field {
 	if label == "" {
 		label = Label(name)
 	}
@@ -369,7 +373,7 @@ func NewField(name string, label string, values Values, errors Errors) Field {
 		ID:     FieldID(name),
 		Label:  label,
 		Value:  values.Get(name),
-		Errors: errors.Get(name),
+		Errors: fieldErrors(name, errors),
 	}
 }
 
@@ -381,10 +385,21 @@ func (v Values) Get(name string) string {
 }
 
 func (e Errors) Get(name string) []string {
+	return e.Messages(name)
+}
+
+func (e Errors) Messages(name string) []string {
 	if e == nil {
 		return nil
 	}
 	return slices.Clone(e[name])
+}
+
+func fieldErrors(name string, errors FieldErrors) []string {
+	if errors == nil {
+		return nil
+	}
+	return slices.Clone(errors.Messages(name))
 }
 
 func FieldID(name string) string {
@@ -436,6 +451,8 @@ func normalizedFieldID(name string) string {
 import (
 	"slices"
 	"testing"
+
+	"github.com/mgomes/ohm"
 )
 
 func TestNewFieldBuildsViewData(t *testing.T) {
@@ -471,6 +488,32 @@ func TestNewFieldUsesExplicitLabel(t *testing.T) {
 
 	if field.Label != "Email address" {
 		t.Errorf("NewField(%q, %q, nil, nil).Label = %q, want %q", "email", "Email address", field.Label, "Email address")
+	}
+}
+
+func TestNewFieldAcceptsOhmErrors(t *testing.T) {
+	validation := ohm.NewValidation()
+	validation.String("email", "").Presence()
+
+	field := NewField("email", "", nil, validation.Errors())
+
+	if !slices.Equal(field.Errors, []string{"is required"}) {
+		t.Errorf("NewField(%q, label, values, ohm.Errors).Errors = %v, want %v", "email", field.Errors, []string{"is required"})
+	}
+}
+
+func TestNewFieldCopiesMessageProviderErrors(t *testing.T) {
+	errors := testFieldErrors{
+		messages: map[string][]string{
+			"email": []string{"is required"},
+		},
+	}
+
+	field := NewField("email", "", nil, errors)
+
+	errors.messages["email"][0] = "changed"
+	if !slices.Equal(field.Errors, []string{"is required"}) {
+		t.Errorf("NewField(%q, label, values, errors).Errors after provider mutation = %v, want %v", "email", field.Errors, []string{"is required"})
 	}
 }
 
@@ -511,6 +554,14 @@ func TestFieldID(t *testing.T) {
 			t.Errorf("FieldID(%q) = %q, want %q", tt.name, got, tt.want)
 		}
 	}
+}
+
+type testFieldErrors struct {
+	messages map[string][]string
+}
+
+func (e testFieldErrors) Messages(name string) []string {
+	return e.messages[name]
 }
 `,
 	"internal/views/assets/assets.go": `package assets

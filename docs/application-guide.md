@@ -140,6 +140,48 @@ the target-aware path when a route supports htmx.
 See [HTML fragments and htmx](html-fragments.md) for form handling, response
 headers, multi-fragment routes, and testing patterns.
 
+## Validations
+
+Ohm form validation is explicit Go. Decode the request body, validate the form
+value, then decide whether to render HTML or return JSON.
+
+```go
+func (f PostForm) Validate(v *ohm.Validation) {
+	v.String("title", f.Title).Presence().Length(3, 120)
+	v.Slice("tags", f.Tags).Min(1)
+}
+
+func PostsCreate(req *ohm.Request) error {
+	var form PostForm
+	if err := req.Decode(&form); err != nil {
+		return err
+	}
+
+	errs := ohm.Validate(form)
+	if errs.Any() {
+		view := PostFormView{Form: form, Errors: errs}
+		return htmx.Render(req, http.StatusUnprocessableEntity, ohm.View(
+			pages.PostsNew(view),
+			ohm.Fragment("post-form", partials.PostForm(view)),
+		))
+	}
+
+	if err := createPost(req.Context(), form); err != nil {
+		return err
+	}
+
+	req.Redirect(http.StatusSeeOther, "/posts")
+	return nil
+}
+```
+
+`ohm.Errors` carries field paths, stable codes, messages, and rule parameters.
+Pass it to templates for server-rendered forms or return `errs.All()` for JSON
+APIs.
+
+See [Validations](validation.md) for built-in rules, custom rules, nested forms,
+generated form helper integration, and JSON responses.
+
 ## Config
 
 Ohm includes a small `.env` loader and typed config decoder.
