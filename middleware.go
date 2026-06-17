@@ -157,7 +157,9 @@ func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) 
 		ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
 			return func(src io.Reader) (int64, error) {
 				n, err := next(src)
-				state.mark(http.StatusOK)
+				if n > 0 {
+					state.mark(http.StatusOK)
+				}
 				return n, err
 			}
 		},

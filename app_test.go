@@ -1,6 +1,7 @@
 package ohm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -302,6 +303,84 @@ func (w *benchmarkResponseWriter) reset() {
 	clear(w.Header())
 	w.status = 0
 	w.bytes = 0
+}
+
+func TestAppErrorHandlerRunsAfterZeroByteReadFromError(t *testing.T) {
+	readErr := errors.New("source failed before writing")
+	app := New()
+	app.Get("/stream", func(req *Request) error {
+		readerFrom, ok := req.ResponseWriter().(io.ReaderFrom)
+		if !ok {
+			t.Errorf("req.ResponseWriter() implements io.ReaderFrom = false, want true")
+			return nil
+		}
+
+		_, err := readerFrom.ReadFrom(errorReader{err: readErr})
+		return err
+	})
+
+	res := &readerFromRecorder{}
+	request := httptest.NewRequest(http.MethodGet, "/stream", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.readFromCalls != 1 {
+		t.Errorf("App.ServeHTTP(%s %s) ReadFrom calls = %d, want %d", request.Method, request.URL.Path, res.readFromCalls, 1)
+	}
+	if res.status != http.StatusInternalServerError {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusInternalServerError)
+	}
+	if res.body.String() != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.body.String(), http.StatusText(http.StatusInternalServerError))
+	}
+}
+
+type readerFromRecorder struct {
+	header        http.Header
+	body          bytes.Buffer
+	status        int
+	readFromCalls int
+}
+
+func (w *readerFromRecorder) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *readerFromRecorder) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(body)
+}
+
+func (w *readerFromRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *readerFromRecorder) ReadFrom(src io.Reader) (int64, error) {
+	w.readFromCalls++
+	return io.Copy(readerFromBodyWriter{recorder: w}, src)
+}
+
+type readerFromBodyWriter struct {
+	recorder *readerFromRecorder
+}
+
+func (w readerFromBodyWriter) Write(body []byte) (int, error) {
+	return w.recorder.Write(body)
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func TestAppUsesCustomErrorHandler(t *testing.T) {
