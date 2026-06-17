@@ -44,7 +44,7 @@ func RenderHTML(w http.ResponseWriter, r *http.Request, status int, html HTML) e
 		return fmt.Errorf("render html: %w", err)
 	}
 
-	writeHTML(w, status, body.String())
+	writeHTML(w, status, body.Bytes())
 	return nil
 }
 
@@ -124,10 +124,10 @@ func writeNoContent(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func writeHTML(w http.ResponseWriter, status int, body string) {
+func writeHTML(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(body))
+	_, _ = w.Write(body)
 }
 
 func respond(w http.ResponseWriter, r *http.Request, v any) {
