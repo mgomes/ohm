@@ -45,7 +45,7 @@ just check
 just server
 ```
 
-Open `http://localhost:8080`.
+Open `http://localhost:3000`.
 
 ## Create a Postgres app
 
