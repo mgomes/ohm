@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
@@ -375,4 +377,67 @@ func TestAllowedMethodsReturnsMatchingRouteMethods(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("App.AllowedMethods(%q) = %v, want %v", "/assets/app.css", got, want)
 	}
+}
+
+func TestAllowedMethodsUsesProvidedMethodSetAndReusesRouteContext(t *testing.T) {
+	routes := &allowedMethodRoutes{
+		matches: map[string]bool{
+			http.MethodPost: true,
+		},
+	}
+
+	got := allowedMethods(routes, []string{http.MethodGet, http.MethodPost}, "/posts")
+	want := []string{http.MethodPost}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("allowedMethods(routes, methods, %q) = %v, want %v", "/posts", got, want)
+	}
+	if routes.routesCalls != 0 {
+		t.Errorf("allowedMethods(routes, methods, path) Routes calls = %d, want 0", routes.routesCalls)
+	}
+	if routes.matchCalls != 2 {
+		t.Errorf("allowedMethods(routes, methods, path) Match calls = %d, want 2", routes.matchCalls)
+	}
+	if routes.changedContext {
+		t.Errorf("allowedMethods(routes, methods, path) changed route context between matches")
+	}
+	if routes.dirtyContext {
+		t.Errorf("allowedMethods(routes, methods, path) reused route context without reset")
+	}
+}
+
+type allowedMethodRoutes struct {
+	matches        map[string]bool
+	firstContext   *chi.Context
+	routesCalls    int
+	matchCalls     int
+	changedContext bool
+	dirtyContext   bool
+}
+
+func (r *allowedMethodRoutes) Routes() []chi.Route {
+	r.routesCalls++
+	return nil
+}
+
+func (r *allowedMethodRoutes) Middlewares() chi.Middlewares {
+	return nil
+}
+
+func (r *allowedMethodRoutes) Match(ctx *chi.Context, method string, _ string) bool {
+	if r.firstContext == nil {
+		r.firstContext = ctx
+	} else if r.firstContext != ctx {
+		r.changedContext = true
+	}
+	if ctx.RoutePath != "" {
+		r.dirtyContext = true
+	}
+	ctx.RoutePath = "dirty"
+	r.matchCalls++
+	return r.matches[method]
+}
+
+func (r *allowedMethodRoutes) Find(*chi.Context, string, string) string {
+	return ""
 }
