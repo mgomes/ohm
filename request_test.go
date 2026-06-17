@@ -1,6 +1,7 @@
 package ohm
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -211,6 +212,777 @@ func TestRequestRenderRunsNestedRenderersAndUsesStatus(t *testing.T) {
 	}
 }
 
+func TestSetStatusDoesNotReplaceRequestContext(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		raw := req.HTTPRequest()
+		ctx := raw.Context()
+		SetStatus(raw, http.StatusAccepted)
+		if raw.Context() != ctx {
+			t.Errorf("SetStatus replaced request context, want stable context")
+		}
+		return req.Render(&renderPayload{Child: &renderChild{}})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
+func TestSetStatusFromMiddlewareAppliesToRender(t *testing.T) {
+	app := New()
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			SetStatus(r, http.StatusAccepted)
+			next.ServeHTTP(w, r)
+		})
+	})
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&renderChild{})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
+func TestSetStatusFromOuterMiddlewareAppliesToMountedAppRender(t *testing.T) {
+	inner := New()
+	inner.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	outer := New()
+	outer.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			SetStatus(r, http.StatusAccepted)
+			next.ServeHTTP(w, r)
+		})
+	})
+	outer.GetHTTP("/render", inner.HTTPHandler())
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	outer.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("mounted App.HTTPHandler().ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerAppliesToRender(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		app.HTTPHandler().ServeHTTP(w, r)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
+		t.Fatalf("pending response status request entry leaked after handler returned")
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesRequestContextCopy(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		ctx := context.WithValue(r.Context(), statusContextKey{}, "copied")
+		app.HTTPHandler().ServeHTTP(w, r.WithContext(ctx))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s with copied context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
+		t.Fatalf("pending response status request entry leaked after handler returned")
+	}
+	if _, ok := pendingResponseStatusBySharedKey.Load(pendingResponseStatusSharedKeyFor(request)); ok {
+		t.Fatalf("pending response status shared entry leaked after handler returned")
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestContextCopy(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		ctx := context.WithValue(r.Context(), statusContextKey{}, "copied")
+		app.HTTPHandler().ServeHTTP(w, r.WithContext(ctx))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	request.Header = nil
+	if request.Context().Done() != nil {
+		t.Fatalf("httptest.NewRequest(%s, %q, nil).Context().Done() is non-nil, want nil", http.MethodGet, "/render")
+	}
+	sharedKey := pendingResponseStatusSharedKeyFor(request)
+	if sharedKey.isZero() {
+		t.Fatalf("pendingResponseStatusSharedKeyFor(request) = 0, want non-zero")
+	}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s with copied background context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
+		t.Fatalf("pending response status request entry leaked after handler returned")
+	}
+	if _, ok := pendingResponseStatusBySharedKey.Load(sharedKey); ok {
+		t.Fatalf("pending response status shared entry leaked after handler returned")
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesRequestClone(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		app.HTTPHandler().ServeHTTP(w, r.Clone(r.Context()))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s cloned request) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
+		t.Fatalf("pending response status request entry leaked after cloned request returned")
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after cloned request returned")
+		}
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesRequestCloneWithComparableBody(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		app.HTTPHandler().ServeHTTP(w, r.Clone(r.Context()))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", strings.NewReader("request body"))
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	if pendingResponseStatusCloneRequestKeyFor(request).body == nil {
+		t.Fatalf("pendingResponseStatusCloneRequestKeyFor(%s %s) body = nil, want comparable body identity", request.Method, request.URL.Path)
+	}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s cloned request with comparable body) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after comparable-body cloned request returned")
+		}
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestCloneWithDerivedContext(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		ctx := context.WithValue(r.Context(), statusContextKey{}, "cloned")
+		app.HTTPHandler().ServeHTTP(w, r.Clone(ctx))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
+	if request.Context().Done() != nil {
+		t.Fatalf("httptest.NewRequest(%s, %q, nil).Context().Done() is non-nil, want nil", http.MethodGet, "/render")
+	}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s cloned with derived background context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after derived background clone returned")
+		}
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesRequestCloneWithDerivedBackgroundContext(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		app.HTTPHandler().ServeHTTP(w, r.Clone(context.WithoutCancel(r.Context())))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s cloned with derived background context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after derived-background cloned request returned")
+		}
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesRewrittenRequestClone(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		http.StripPrefix("/prefix", app.HTTPHandler()).ServeHTTP(w, r)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/prefix/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s stripped request) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after stripped request returned")
+		}
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesNoBodyRewrittenRequestCopy(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		http.StripPrefix("/prefix", app.HTTPHandler()).ServeHTTP(w, r)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/prefix/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	rewrittenKey := pendingResponseStatusRewrittenCopyKeyFor(request)
+	if rewrittenKey.isZero() {
+		t.Fatalf("pendingResponseStatusRewrittenCopyKeyFor(%s %s) is zero, want non-zero", request.Method, request.URL.Path)
+	}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s bodyless stripped request) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByCloneKey.Load(rewrittenKey); ok {
+		t.Fatalf("pending response status rewritten-copy entry leaked after bodyless stripped request returned")
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerClearsAmbiguousRequestCloneStatuses(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+	body := &statusReadCloser{Reader: strings.NewReader("request body")}
+	first.Body = body
+	second.Body = body
+
+	SetStatus(first, http.StatusCreated)
+	SetStatus(second, http.StatusAccepted)
+
+	if status, ok := takePendingResponseStatus(first.Clone(first.Context())); ok {
+		t.Fatalf("takePendingResponseStatus(cloned ambiguous request) = (%d, true), want no status", status)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(first); ok {
+		t.Fatalf("pending response status request entry leaked for first ambiguous request")
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(second); ok {
+		t.Fatalf("pending response status request entry leaked for second ambiguous request")
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(first) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked for ambiguous requests")
+		}
+	}
+}
+
+func TestSetStatusWithCanceledContextCleansPendingResponseStatus(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+	sharedKey := pendingResponseStatusSharedKeyFor(request)
+	cloneKeys := pendingResponseStatusCloneKeysFor(request)
+
+	SetStatus(request, http.StatusCreated)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, requestPending := pendingResponseStatusByRequest.Load(request)
+		_, sharedPending := pendingResponseStatusBySharedKey.Load(sharedKey)
+		clonePending := false
+		for _, key := range cloneKeys {
+			if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+				clonePending = true
+				break
+			}
+		}
+		if !requestPending && !sharedPending && !clonePending {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pending response status entries were not cleaned after canceled context")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestSetStatusWithBackgroundContextExpiresPendingResponseStatus(t *testing.T) {
+	previousTTL := pendingResponseStatusTTL
+	pendingResponseStatusTTL = time.Millisecond
+	defer func() {
+		pendingResponseStatusTTL = previousTTL
+	}()
+
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	sharedKey := pendingResponseStatusSharedKeyFor(request)
+	cloneKeys := pendingResponseStatusCloneKeysFor(request)
+
+	SetStatus(request, http.StatusCreated)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, requestPending := pendingResponseStatusByRequest.Load(request)
+		_, sharedPending := pendingResponseStatusBySharedKey.Load(sharedKey)
+		clonePending := false
+		for _, key := range cloneKeys {
+			if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+				clonePending = true
+				break
+			}
+		}
+		if !requestPending && !sharedPending && !clonePending {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pending response status entries were not expired for background context")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossSharedContextRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render?request=first", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render?request=second", nil).WithContext(ctx)
+
+	SetStatus(first, http.StatusCreated)
+
+	secondResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusOK)
+	}
+
+	firstResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossIdenticalCancellableRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+
+	SetStatus(first, http.StatusCreated)
+
+	secondResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with identical shared-context request) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusOK)
+	}
+
+	firstResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s original shared-context request) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossIdenticalBackgroundRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	first := httptest.NewRequest(http.MethodGet, "/render", nil)
+	second := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	SetStatus(first, http.StatusCreated)
+
+	secondResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with identical background request) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusOK)
+	}
+
+	firstResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s original background request) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerDoesNotMatchNoBodyDetachedBackgroundClone(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	SetStatus(request, http.StatusCreated)
+
+	cloneResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(cloneResponse, request.Clone(context.WithoutCancel(request.Context())))
+	if cloneResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s no-body detached clone) status = %d, want %d", request.Method, request.URL.String(), cloneResponse.Code, http.StatusOK)
+	}
+
+	originalResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(originalResponse, request)
+	if originalResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s original background request) status = %d, want %d", request.Method, request.URL.String(), originalResponse.Code, http.StatusCreated)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerCannotSafelyMatchNoBodyRequestClone(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	SetStatus(request, http.StatusCreated)
+
+	cloneResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(cloneResponse, request.Clone(request.Context()))
+	if cloneResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s no-body clone) status = %d, want %d", request.Method, request.URL.String(), cloneResponse.Code, http.StatusOK)
+	}
+
+	originalResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(originalResponse, request)
+	if originalResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s original no-body request) status = %d, want %d", request.Method, request.URL.String(), originalResponse.Code, http.StatusCreated)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableContextRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render?request=first", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render?request=second", nil).WithContext(ctx)
+
+	SetStatus(first, http.StatusCreated)
+	SetStatus(second, http.StatusAccepted)
+
+	firstResponse := httptest.NewRecorder()
+	firstCtx := context.WithValue(first.Context(), statusContextKey{}, "first")
+	app.HTTPHandler().ServeHTTP(firstResponse, first.WithContext(firstCtx))
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+
+	secondResponse := httptest.NewRecorder()
+	secondCtx := context.WithValue(second.Context(), statusContextKey{}, "second")
+	app.HTTPHandler().ServeHTTP(secondResponse, second.WithContext(secondCtx))
+	if secondResponse.Code != http.StatusAccepted {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusAccepted)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(first); ok {
+		t.Fatalf("pending response status request entry leaked for first request")
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(second); ok {
+		t.Fatalf("pending response status request entry leaked for second request")
+	}
+	if _, ok := pendingResponseStatusBySharedKey.Load(pendingResponseStatusSharedKeyFor(first)); ok {
+		t.Fatalf("pending response status shared entry leaked for first request")
+	}
+	if _, ok := pendingResponseStatusBySharedKey.Load(pendingResponseStatusSharedKeyFor(second)); ok {
+		t.Fatalf("pending response status shared entry leaked for second request")
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableClonedRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render?request=first", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render?request=second", nil).WithContext(ctx)
+	first.Body = &statusReadCloser{Reader: strings.NewReader("first request body")}
+	second.Body = &statusReadCloser{Reader: strings.NewReader("second request body")}
+
+	SetStatus(first, http.StatusCreated)
+	SetStatus(second, http.StatusAccepted)
+
+	firstResponse := httptest.NewRecorder()
+	firstCtx := context.WithValue(first.Context(), statusContextKey{}, "first")
+	app.HTTPHandler().ServeHTTP(firstResponse, first.Clone(firstCtx))
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s cloned with shared context) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+
+	secondResponse := httptest.NewRecorder()
+	secondCtx := context.WithValue(second.Context(), statusContextKey{}, "second")
+	app.HTTPHandler().ServeHTTP(secondResponse, second.Clone(secondCtx))
+	if secondResponse.Code != http.StatusAccepted {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s cloned with shared context) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusAccepted)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(first) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked for first request")
+		}
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(second) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked for second request")
+		}
+	}
+}
+
+func TestSetStatusFromInternalSubrequestDoesNotAffectOuterRender(t *testing.T) {
+	app := New()
+	app.Get("/inner", func(req *Request) error {
+		SetStatus(req.HTTPRequest(), http.StatusCreated)
+		return req.Render(&statusPayload{})
+	})
+	app.Get("/outer", func(req *Request) error {
+		innerRequest := req.HTTPRequest().Clone(req.HTTPRequest().Context())
+		innerRequest.URL.Path = "/inner"
+		innerRequest.RequestURI = "/inner"
+		innerResponse := httptest.NewRecorder()
+
+		app.ServeHTTP(innerResponse, innerRequest)
+		if innerResponse.Code != http.StatusCreated {
+			t.Errorf("App.ServeHTTP(%s %s cloned from outer request) status = %d, want %d", innerRequest.Method, innerRequest.URL.Path, innerResponse.Code, http.StatusCreated)
+		}
+
+		return req.Render(&statusPayload{})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/outer", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+}
+
+func TestSetStatusFromOuterHandlerDoesNotSeedInternalSubrequest(t *testing.T) {
+	app := New()
+	app.Get("/inner", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	app.Get("/outer", func(req *Request) error {
+		SetStatus(req.HTTPRequest(), http.StatusAccepted)
+		innerRequest := req.HTTPRequest().Clone(req.HTTPRequest().Context())
+		innerRequest.URL.Path = "/inner"
+		innerRequest.RequestURI = "/inner"
+		innerResponse := httptest.NewRecorder()
+
+		app.ServeHTTP(innerResponse, innerRequest)
+		if innerResponse.Code != http.StatusOK {
+			t.Errorf("App.ServeHTTP(%s %s cloned after outer SetStatus) status = %d, want %d", innerRequest.Method, innerRequest.URL.Path, innerResponse.Code, http.StatusOK)
+		}
+
+		return req.Render(&statusPayload{})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/outer", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
+func TestSetStatusFromMiddlewareDoesNotSeedHandlerInternalSubrequest(t *testing.T) {
+	app := New()
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/outer" {
+				SetStatus(r, http.StatusAccepted)
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	app.Get("/inner", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	app.Get("/outer", func(req *Request) error {
+		innerRequest := req.HTTPRequest().Clone(req.HTTPRequest().Context())
+		innerRequest.URL.Path = "/inner"
+		innerRequest.RequestURI = "/inner"
+		innerResponse := httptest.NewRecorder()
+
+		app.ServeHTTP(innerResponse, innerRequest)
+		if innerResponse.Code != http.StatusOK {
+			t.Errorf("App.ServeHTTP(%s %s cloned after middleware SetStatus) status = %d, want %d", innerRequest.Method, innerRequest.URL.Path, innerResponse.Code, http.StatusOK)
+		}
+
+		return req.Render(&statusPayload{})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/outer", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
+func TestSetStatusDoesNotRaceWithRequestContextReaders(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		raw := req.HTTPRequest()
+		done := make(chan struct{})
+		ready := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			close(ready)
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					_ = raw.Context()
+				}
+			}
+		})
+		<-ready
+
+		for range 1000 {
+			SetStatus(raw, http.StatusAccepted)
+		}
+		close(done)
+		wg.Wait()
+
+		return req.Render(&renderPayload{Child: &renderChild{}})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
 func TestCachedImplementingFieldIndexesCachesExportedImplementers(t *testing.T) {
 	type payload struct {
 		Name   string
@@ -418,6 +1190,25 @@ type renderChild struct {
 
 func (c *renderChild) Render(http.ResponseWriter, *http.Request) error {
 	c.Message = "child"
+	return nil
+}
+
+type statusContextKey struct{}
+
+type statusReadCloser struct {
+	*strings.Reader
+}
+
+func (*statusReadCloser) Close() error {
+	return nil
+}
+
+type statusPayload struct {
+	Message string `json:"message"`
+}
+
+func (p *statusPayload) Render(http.ResponseWriter, *http.Request) error {
+	p.Message = "status"
 	return nil
 }
 

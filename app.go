@@ -136,12 +136,12 @@ func (a *App) MethodNotAllowed(handler MethodNotAllowedHandler) {
 
 // ServeHTTP serves HTTP requests.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a.router.ServeHTTP(w, r)
+	a.router.ServeHTTP(w, withNewResponseStatus(r))
 }
 
 // HTTPHandler returns the underlying HTTP handler.
 func (a *App) HTTPHandler() http.Handler {
-	return a.router
+	return http.HandlerFunc(a.ServeHTTP)
 }
 
 // Routes returns registered routes sorted by method and pattern.
@@ -215,6 +215,8 @@ func staticPrefix(pattern string) string {
 
 func (a *App) adapt(handler Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = withResponseStatus(r)
+		markResponseStatusHandlerStarted(r)
 		req := newRequest(w, r)
 		if err := handler(req); err != nil {
 			recordHandlerError(r.Context(), err)
