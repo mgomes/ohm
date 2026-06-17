@@ -78,6 +78,10 @@ server and runs shutdown hooks with a fresh bounded context. Those hooks may
 overlap abandoned handlers that are still unwinding, so cleanup code should be
 tolerant of late request logging, tracing, or snapshot attempts.
 
+The server command treats SIGINT and SIGTERM as graceful-shutdown requests, so
+Ctrl-C, container stops, and process-manager termination all run the same drain
+and shutdown-hook path.
+
 ## Prefer Observe for helper work
 
 Most helper functions do not need a child span for every successful call. Use
