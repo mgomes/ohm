@@ -3,6 +3,8 @@ package scrub
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,6 +15,90 @@ import (
 type customEncodedCredentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+type credentialError struct {
+	Message  string
+	Password string
+}
+
+type privateCredentialError struct {
+	password string
+}
+
+type privateMapError struct {
+	fields map[string]any
+}
+
+type privateInterfaceError struct {
+	payload any
+}
+
+type privateExportedMapPayload struct {
+	Fields map[string]any
+}
+
+type privateExportedMapError struct {
+	payload privateExportedMapPayload
+}
+
+type typedNilWrapError struct {
+	child error
+}
+
+type hiddenCredentialWrapError struct {
+	safe   error
+	hidden error
+}
+
+type customEncodedError struct {
+	password string
+}
+
+func (e credentialError) Error() string {
+	return e.Message + ": " + e.Password
+}
+
+func (e privateCredentialError) Error() string {
+	return e.password
+}
+
+func (e privateMapError) Error() string {
+	return fmt.Sprint(e.fields)
+}
+
+func (e privateInterfaceError) Error() string {
+	return fmt.Sprint(e.payload)
+}
+
+func (e privateExportedMapError) Error() string {
+	return fmt.Sprint(e.payload.Fields)
+}
+
+func (e *typedNilWrapError) Error() string {
+	return "wrap: " + e.child.Error()
+}
+
+func (e *typedNilWrapError) Unwrap() error {
+	return e.child
+}
+
+func (e hiddenCredentialWrapError) Error() string {
+	return e.safe.Error() + ": " + e.hidden.Error()
+}
+
+func (e hiddenCredentialWrapError) Unwrap() error {
+	return e.safe
+}
+
+func (e customEncodedError) Error() string {
+	return "custom encoded error"
+}
+
+func (e customEncodedError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]string{
+		"password": e.password,
+	})
 }
 
 func (c customEncodedCredentials) MarshalJSON() ([]byte, error) {
@@ -227,6 +313,335 @@ func TestHandlerRedactsSlogOutput(t *testing.T) {
 	headers := got["headers"].(map[string]any)
 	if headers["Cookie"] != defaultReplacement {
 		t.Errorf("logged headers.Cookie = %v, want %v", headers["Cookie"], defaultReplacement)
+	}
+}
+
+func TestHandlerPreservesErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("error", errors.New("connection refused")))
+
+	output := buf.String()
+	if !strings.Contains(output, "connection refused") {
+		t.Errorf("logged output %q contains error message %q = false, want true", output, "connection refused")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["error"] != "connection refused" {
+		t.Errorf("logged error = %v, want %v", got["error"], "connection refused")
+	}
+}
+
+func TestHandlerPreservesJoinedErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("error", errors.Join(
+		errors.New("connection refused"),
+		errors.New("retry exhausted"),
+	)))
+
+	output := buf.String()
+	for _, message := range []string{"connection refused", "retry exhausted"} {
+		if !strings.Contains(output, message) {
+			t.Errorf("logged output %q contains error message %q = false, want true", output, message)
+		}
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["error"] != "connection refused\nretry exhausted" {
+		t.Errorf("logged error = %v, want %v", got["error"], "connection refused\nretry exhausted")
+	}
+}
+
+func TestHandlerPreservesDuplicateJoinedErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	err := errors.New("connection refused")
+	logger.Error("request failed", slog.Any("error", errors.Join(err, err)))
+
+	output := buf.String()
+	if !strings.Contains(output, "connection refused") {
+		t.Errorf("logged output %q contains error message %q = false, want true", output, "connection refused")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["error"] != "connection refused\nconnection refused" {
+		t.Errorf("logged error = %v, want %v", got["error"], "connection refused\nconnection refused")
+	}
+}
+
+func TestHandlerPreservesWrappedErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("error", fmt.Errorf("connect: %w", errors.New("connection refused"))))
+
+	output := buf.String()
+	if !strings.Contains(output, "connect: connection refused") {
+		t.Errorf("logged output %q contains error message %q = false, want true", output, "connect: connection refused")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["error"] != "connect: connection refused" {
+		t.Errorf("logged error = %v, want %v", got["error"], "connect: connection refused")
+	}
+}
+
+func TestHandlerPreservesNestedErrorAttributes(t *testing.T) {
+	type payload struct {
+		Err error `json:"err"`
+	}
+
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{
+			name: "map",
+			value: map[string]any{
+				"err": errors.New("connection refused"),
+			},
+		},
+		{
+			name: "struct",
+			value: payload{
+				Err: errors.New("connection refused"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+			logger.Error("request failed", slog.Any("payload", tt.value))
+
+			output := buf.String()
+			if !strings.Contains(output, "connection refused") {
+				t.Errorf("logged output %q contains error message %q = false, want true", output, "connection refused")
+			}
+
+			var got map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+				t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+			}
+			payload := got["payload"].(map[string]any)
+			if payload["err"] != "connection refused" {
+				t.Errorf("logged payload.err = %v, want %v", payload["err"], "connection refused")
+			}
+		})
+	}
+}
+
+func TestHandlerConvertsTypedNilErrorAttributesToNull(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	var err *typedNilWrapError
+	logger.Error("request failed", slog.Any("error", err))
+
+	output := buf.String()
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["error"] != nil {
+		t.Errorf("logged error = %v, want nil", got["error"])
+	}
+}
+
+func TestHandlerRedactsSensitiveErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("password", errors.New("secret")))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["password"] != defaultReplacement {
+		t.Errorf("logged password = %v, want %v", got["password"], defaultReplacement)
+	}
+}
+
+func TestHandlerRedactsStructuredErrorFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", credentialError{
+		Message:  "connection failed",
+		Password: "secret",
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	failure := got["failure"].(map[string]any)
+	if failure["Message"] != "connection failed" {
+		t.Errorf("logged failure.Message = %v, want %v", failure["Message"], "connection failed")
+	}
+	if failure["Password"] != defaultReplacement {
+		t.Errorf("logged failure.Password = %v, want %v", failure["Password"], defaultReplacement)
+	}
+}
+
+func TestHandlerRedactsPrivateSensitiveErrorFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", privateCredentialError{
+		password: "secret",
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsWrappedStructuredErrors(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	err := fmt.Errorf("wrap: %w", credentialError{
+		Message:  "connection failed",
+		Password: "secret",
+	})
+	logger.Error("request failed", slog.Any("failure", err))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsWrappedHiddenStructuredErrors(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	err := hiddenCredentialWrapError{
+		safe: errors.New("connection failed"),
+		hidden: credentialError{
+			Message:  "credential failed",
+			Password: "secret",
+		},
+	}
+	logger.Error("request failed", slog.Any("failure", err))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsJoinedStructuredErrors(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	err := errors.Join(
+		errors.New("connection failed"),
+		credentialError{
+			Message:  "credential failed",
+			Password: "secret",
+		},
+	)
+	logger.Error("request failed", slog.Any("failure", err))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsPrivateMapErrorPayload(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", privateMapError{
+		fields: map[string]any{
+			"password": "secret",
+		},
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsPrivateInterfaceErrorPayload(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", privateInterfaceError{
+		payload: map[string]any{
+			"password": "secret",
+		},
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsPrivatePayloadExportedStructuredFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", privateExportedMapError{
+		payload: privateExportedMapPayload{
+			Fields: map[string]any{
+				"password": "secret",
+			},
+		},
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsCustomEncodedErrorPayload(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", customEncodedError{
+		password: "secret",
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
 	}
 }
 

@@ -12,6 +12,8 @@ import (
 
 const defaultReplacement = "[REDACTED]"
 
+const maxErrorUnwrapDepth = 32
+
 var defaultKeys = []string{
 	"password",
 	"passwd",
@@ -30,6 +32,15 @@ var defaultKeys = []string{
 var normalizedDefaultKeys = normalizedKeys(defaultKeys...)
 
 var timeType = reflect.TypeOf(time.Time{})
+var errorType = reflect.TypeOf((*error)(nil)).Elem()
+
+type unwrapOne interface {
+	Unwrap() error
+}
+
+type unwrapMany interface {
+	Unwrap() []error
+}
 
 // Option configures a Redactor.
 type Option func(*Redactor)
@@ -126,6 +137,14 @@ func (r *Redactor) Any(key string, value any) any {
 }
 
 func (r *Redactor) any(key string, value any) (any, bool) {
+	return r.anyValue(key, value, false)
+}
+
+func (r *Redactor) nestedAny(key string, value any) (any, bool) {
+	return r.anyValue(key, value, true)
+}
+
+func (r *Redactor) anyValue(key string, value any, nested bool) (any, bool) {
 	if r.SensitiveKey(key) {
 		return r.replacementValue(), true
 	}
@@ -135,6 +154,16 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 		return nil, false
 	case Sensitive:
 		return r.replacementValue(), true
+	case error:
+		if isNilError(value) {
+			return nil, true
+		}
+		if r.preservesErrorEncoding(value) {
+			if nested {
+				return value.Error(), true
+			}
+			return value, false
+		}
 	case slog.Attr:
 		return r.Attr(value), true
 	case []slog.Attr:
@@ -160,6 +189,318 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 	}
 
 	return r.reflectAny(value)
+}
+
+func (r *Redactor) preservesErrorEncoding(value error) bool {
+	return r.preservesErrorEncodingAtDepth(value, 0)
+}
+
+func (r *Redactor) preservesErrorEncodingAtDepth(value error, depth int) bool {
+	if value == nil {
+		return true
+	}
+	if depth > maxErrorUnwrapDepth {
+		return false
+	}
+	if isNilError(value) {
+		return false
+	}
+	if implementsEncoding(value) {
+		return false
+	}
+
+	unwrapsOne := false
+	unwrapsMany := false
+	switch value := value.(type) {
+	case unwrapMany:
+		unwrapsMany = true
+		for _, child := range value.Unwrap() {
+			if !r.preservesErrorEncodingAtDepth(child, depth+1) {
+				return false
+			}
+		}
+	case unwrapOne:
+		unwrapsOne = true
+		if !r.preservesErrorEncodingAtDepth(value.Unwrap(), depth+1) {
+			return false
+		}
+	}
+
+	reflected := reflect.ValueOf(value)
+	for reflected.Kind() == reflect.Interface || reflected.Kind() == reflect.Pointer {
+		if reflected.IsNil() {
+			return true
+		}
+		reflected = reflected.Elem()
+	}
+
+	switch reflected.Kind() {
+	case reflect.Struct:
+		return !hasExportedFields(reflected.Type()) &&
+			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{})) &&
+			!hasPrivateStructuredFields(reflected.Type(), make(map[reflect.Type]struct{}), unwrapsOne, unwrapsMany, false) &&
+			!r.hasUnsafePrivateFieldValues(reflected, unwrapsOne, unwrapsMany, make(map[uintptr]struct{}), 0, false)
+	case reflect.Map, reflect.Slice, reflect.Array:
+		return false
+	}
+	return true
+}
+
+func isNilError(value error) bool {
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
+
+func hasExportedFields(t reflect.Type) bool {
+	for i := range t.NumField() {
+		if t.Field(i).IsExported() {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPrivateStructuredFields(
+	t reflect.Type,
+	seen map[reflect.Type]struct{},
+	allowErrorInterfaces bool,
+	allowErrorCollections bool,
+	inspectExportedFields bool,
+) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if _, ok := seen[t]; ok {
+		return false
+	}
+	seen[t] = struct{}{}
+
+	switch t.Kind() {
+	case reflect.Struct:
+		for i := range t.NumField() {
+			field := t.Field(i)
+			if field.IsExported() && !inspectExportedFields {
+				continue
+			}
+			if hasStructuredFieldType(field.Type, seen, allowErrorInterfaces, allowErrorCollections) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasStructuredFieldType(
+	t reflect.Type,
+	seen map[reflect.Type]struct{},
+	allowErrorInterfaces bool,
+	allowErrorCollections bool,
+) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	switch t.Kind() {
+	case reflect.Interface:
+		if allowErrorInterfaces && t.Implements(errorType) {
+			return false
+		}
+		return true
+	case reflect.Map, reflect.Slice, reflect.Array:
+		if allowErrorCollections && isErrorCollection(t) {
+			return false
+		}
+		return true
+	case reflect.Struct:
+		return hasPrivateStructuredFields(t, seen, allowErrorInterfaces, allowErrorCollections, true)
+	default:
+		return false
+	}
+}
+
+func isErrorCollection(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
+		return t.Elem().Implements(errorType)
+	default:
+		return false
+	}
+}
+
+func (r *Redactor) hasUnsafePrivateFieldValues(
+	value reflect.Value,
+	allowErrorInterfaces bool,
+	allowErrorCollections bool,
+	seenPointers map[uintptr]struct{},
+	depth int,
+	inspectExportedFields bool,
+) bool {
+	if depth > maxErrorUnwrapDepth {
+		return true
+	}
+
+	value, ok := dereferenceValue(value, seenPointers)
+	if !ok {
+		return true
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return false
+	}
+
+	t := value.Type()
+	for i := range t.NumField() {
+		field := t.Field(i)
+		if field.IsExported() && !inspectExportedFields {
+			continue
+		}
+		if r.hasUnsafePrivateFieldValue(
+			value.Field(i),
+			allowErrorInterfaces,
+			allowErrorCollections,
+			cloneSeenPointers(seenPointers),
+			depth+1,
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Redactor) hasUnsafePrivateFieldValue(
+	value reflect.Value,
+	allowErrorInterfaces bool,
+	allowErrorCollections bool,
+	seenPointers map[uintptr]struct{},
+	depth int,
+) bool {
+	if !value.IsValid() {
+		return false
+	}
+	if depth > maxErrorUnwrapDepth {
+		return true
+	}
+
+	switch value.Kind() {
+	case reflect.Interface:
+		if allowErrorInterfaces && value.Type().Implements(errorType) {
+			if value.IsNil() {
+				return false
+			}
+			return r.hasUnsafeErrorFieldValue(value.Elem(), seenPointers, depth+1)
+		}
+	case reflect.Pointer:
+		if value.IsNil() {
+			return false
+		}
+		return r.hasUnsafePrivateFieldValue(value.Elem(), allowErrorInterfaces, allowErrorCollections, seenPointers, depth+1)
+	case reflect.Slice, reflect.Array:
+		if allowErrorCollections && isErrorCollection(value.Type()) {
+			for i := range value.Len() {
+				if r.hasUnsafeErrorFieldValue(value.Index(i), cloneSeenPointers(seenPointers), depth+1) {
+					return true
+				}
+			}
+		}
+	case reflect.Struct:
+		return r.hasUnsafePrivateFieldValues(value, allowErrorInterfaces, allowErrorCollections, seenPointers, depth+1, true)
+	}
+	return false
+}
+
+func (r *Redactor) hasUnsafeErrorFieldValue(value reflect.Value, seenPointers map[uintptr]struct{}, depth int) bool {
+	if depth > maxErrorUnwrapDepth {
+		return true
+	}
+
+	value, ok := dereferenceValue(value, seenPointers)
+	if !ok {
+		return true
+	}
+	if !value.IsValid() {
+		return false
+	}
+
+	switch value.Kind() {
+	case reflect.Struct:
+		return hasExportedFields(value.Type()) ||
+			r.hasSensitiveFieldName(value.Type(), make(map[reflect.Type]struct{})) ||
+			hasPrivateStructuredFields(value.Type(), make(map[reflect.Type]struct{}), true, true, false) ||
+			r.hasUnsafePrivateFieldValues(value, true, true, seenPointers, depth+1, false)
+	case reflect.Map:
+		return true
+	case reflect.Slice, reflect.Array:
+		if isErrorCollection(value.Type()) {
+			for i := range value.Len() {
+				if r.hasUnsafeErrorFieldValue(value.Index(i), cloneSeenPointers(seenPointers), depth+1) {
+					return true
+				}
+			}
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func dereferenceValue(value reflect.Value, seenPointers map[uintptr]struct{}) (reflect.Value, bool) {
+	for value.IsValid() && (value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer) {
+		if value.IsNil() {
+			return reflect.Value{}, true
+		}
+		if value.Kind() == reflect.Pointer {
+			pointer := value.Pointer()
+			if _, ok := seenPointers[pointer]; ok {
+				return reflect.Value{}, false
+			}
+			seenPointers[pointer] = struct{}{}
+		}
+		value = value.Elem()
+	}
+	return value, true
+}
+
+func cloneSeenPointers(seenPointers map[uintptr]struct{}) map[uintptr]struct{} {
+	cloned := make(map[uintptr]struct{}, len(seenPointers))
+	for pointer := range seenPointers {
+		cloned[pointer] = struct{}{}
+	}
+	return cloned
+}
+
+func (r *Redactor) hasSensitiveFieldName(t reflect.Type, seen map[reflect.Type]struct{}) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if _, ok := seen[t]; ok {
+		return false
+	}
+	seen[t] = struct{}{}
+
+	switch t.Kind() {
+	case reflect.Struct:
+		for i := range t.NumField() {
+			field := t.Field(i)
+			if r.SensitiveKey(field.Name) {
+				return true
+			}
+			if key, ok := fieldKey(field); ok && r.SensitiveKey(key) {
+				return true
+			}
+			if r.hasSensitiveFieldName(field.Type, seen) {
+				return true
+			}
+		}
+	case reflect.Map, reflect.Slice, reflect.Array:
+		return r.hasSensitiveFieldName(t.Elem(), seen)
+	}
+	return false
 }
 
 func (r *Redactor) addKey(key string) {
@@ -194,7 +535,7 @@ func (r *Redactor) mapAny(value map[string]any) (any, bool) {
 	out := make(map[string]any, len(value))
 	changed := false
 	for key, childValue := range value {
-		redacted, childChanged := r.any(key, childValue)
+		redacted, childChanged := r.nestedAny(key, childValue)
 		out[key] = redacted
 		changed = changed || childChanged
 	}
@@ -234,7 +575,7 @@ func (r *Redactor) reflectValue(reflected reflect.Value) (any, bool) {
 		iter := reflected.MapRange()
 		for iter.Next() {
 			key := iter.Key().String()
-			redacted, childChanged := r.any(key, valueFromReflect(iter.Value()))
+			redacted, childChanged := r.nestedAny(key, valueFromReflect(iter.Value()))
 			out[key] = redacted
 			changed = changed || childChanged
 		}
@@ -246,7 +587,7 @@ func (r *Redactor) reflectValue(reflected reflect.Value) (any, bool) {
 		out := make([]any, 0, reflected.Len())
 		changed := false
 		for i := range reflected.Len() {
-			redacted, childChanged := r.any("", valueFromReflect(reflected.Index(i)))
+			redacted, childChanged := r.nestedAny("", valueFromReflect(reflected.Index(i)))
 			out = append(out, redacted)
 			changed = changed || childChanged
 		}
@@ -282,7 +623,7 @@ func (r *Redactor) structAny(reflected reflect.Value, forceMap bool) (any, bool)
 			continue
 		}
 
-		redacted, fieldChanged := r.any(key, valueFromReflect(reflected.Field(i)))
+		redacted, fieldChanged := r.nestedAny(key, valueFromReflect(reflected.Field(i)))
 		out[key] = redacted
 		changed = changed || fieldChanged
 	}
