@@ -3,6 +3,7 @@ package ohm
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -98,6 +99,24 @@ func TestRequestLoggerStoresRequestIDInContext(t *testing.T) {
 	}
 	if res.Header().Get(RequestIDHeader) != res.Body.String() {
 		t.Errorf("App.ServeHTTP(%s %s) response request id = %q, want %q", request.Method, request.URL.Path, res.Header().Get(RequestIDHeader), res.Body.String())
+	}
+}
+
+func TestEnsureRequestIDReusesRequestWithExistingContextID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/request-id", nil)
+	request = request.WithContext(context.WithValue(request.Context(), requestIDKey{}, "req-existing"))
+	res := httptest.NewRecorder()
+
+	got, requestID := ensureRequestID(res, request)
+
+	if got != request {
+		t.Errorf("ensureRequestID(response, request) request = %p, want %p", got, request)
+	}
+	if requestID != "req-existing" {
+		t.Errorf("ensureRequestID(response, request) request id = %q, want %q", requestID, "req-existing")
+	}
+	if res.Header().Get(RequestIDHeader) != "" {
+		t.Errorf("ensureRequestID(response, request) response request id = %q, want empty", res.Header().Get(RequestIDHeader))
 	}
 }
 
