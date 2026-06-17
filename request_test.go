@@ -397,6 +397,31 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestClone(t *testing.T) {
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerSurvivesRewrittenRequestClone(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		http.StripPrefix("/prefix", app.HTTPHandler()).ServeHTTP(w, r)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/prefix/render", nil)
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s stripped request) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after stripped request returned")
+		}
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerClearsAmbiguousRequestCloneStatuses(t *testing.T) {
 	first := httptest.NewRequest(http.MethodGet, "/render", nil)
 	second := httptest.NewRequest(http.MethodGet, "/render", nil)
@@ -417,6 +442,36 @@ func TestSetStatusBeforeHTTPHandlerClearsAmbiguousRequestCloneStatuses(t *testin
 		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
 			t.Fatalf("pending response status clone entry leaked for ambiguous requests")
 		}
+	}
+}
+
+func TestSetStatusWithCanceledContextCleansPendingResponseStatus(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+	sharedKey := pendingResponseStatusSharedKeyFor(request)
+	cloneKeys := pendingResponseStatusCloneKeysFor(request)
+
+	SetStatus(request, http.StatusCreated)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, requestPending := pendingResponseStatusByRequest.Load(request)
+		_, sharedPending := pendingResponseStatusBySharedKey.Load(sharedKey)
+		clonePending := false
+		for _, key := range cloneKeys {
+			if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+				clonePending = true
+				break
+			}
+		}
+		if !requestPending && !sharedPending && !clonePending {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pending response status entries were not cleaned after canceled context")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

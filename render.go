@@ -28,7 +28,9 @@ type pendingResponseStatus struct {
 	sharedKey pendingResponseStatusSharedKey
 	cloneKeys []any
 
-	stopCleanup func() bool
+	cleanupMu      sync.Mutex
+	stopCleanup    func() bool
+	cleanupStopped bool
 }
 
 var (
@@ -66,6 +68,14 @@ type pendingResponseStatusDoneCloneKey struct {
 	request pendingResponseStatusCloneRequestKey
 }
 
+type pendingResponseStatusContextKey struct {
+	context any
+}
+
+type pendingResponseStatusDoneKey struct {
+	done <-chan struct{}
+}
+
 type pendingResponseStatusGroup struct {
 	mu       sync.Mutex
 	pendings []*pendingResponseStatus
@@ -75,10 +85,7 @@ func withResponseStatus(r *http.Request) *http.Request {
 	if r == nil {
 		return nil
 	}
-	if state, ok := responseStatusStateFromRequest(r); ok {
-		if status, ok := takePendingResponseStatus(r); ok {
-			state.code.Store(status)
-		}
+	if _, ok := responseStatusStateFromRequest(r); ok {
 		return r
 	}
 	state := &responseStatusState{}
@@ -338,8 +345,16 @@ func responseStatusOrFallback(status int32, ok bool, fallback int) int {
 }
 
 func stopPendingResponseStatusCleanup(pending *pendingResponseStatus) {
-	if pending != nil && pending.stopCleanup != nil {
-		pending.stopCleanup()
+	if pending == nil {
+		return
+	}
+	pending.cleanupMu.Lock()
+	pending.cleanupStopped = true
+	stopCleanup := pending.stopCleanup
+	pending.stopCleanup = nil
+	pending.cleanupMu.Unlock()
+	if stopCleanup != nil {
+		stopCleanup()
 	}
 }
 
@@ -347,9 +362,17 @@ func startPendingResponseStatusCleanup(pending *pendingResponseStatus, ctx conte
 	if ctx.Done() == nil {
 		return
 	}
-	pending.stopCleanup = context.AfterFunc(ctx, func() {
+	stopCleanup := context.AfterFunc(ctx, func() {
 		deletePendingResponseStatus(pending)
 	})
+	pending.cleanupMu.Lock()
+	if pending.cleanupStopped {
+		pending.cleanupMu.Unlock()
+		stopCleanup()
+		return
+	}
+	pending.stopCleanup = stopCleanup
+	pending.cleanupMu.Unlock()
 }
 
 func deletePendingResponseStatus(pending *pendingResponseStatus) {
@@ -505,6 +528,12 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 			done:    done,
 			request: requestKey,
 		})
+	}
+	if contextKey, ok := comparableContextKey(r.Context()); ok {
+		keys = append(keys, pendingResponseStatusContextKey{context: contextKey})
+	}
+	if done := r.Context().Done(); done != nil {
+		keys = append(keys, pendingResponseStatusDoneKey{done: done})
 	}
 	return keys
 }
