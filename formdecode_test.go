@@ -250,6 +250,10 @@ func TestDecodeFormRejectsInvalidIndexedFields(t *testing.T) {
 			name:   "array overflow",
 			values: url.Values{"codes.2": []string{"go"}},
 		},
+		{
+			name:   "slice index above limit",
+			values: url.Values{"tags.10000": []string{"go"}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -263,6 +267,22 @@ func TestDecodeFormRejectsInvalidIndexedFields(t *testing.T) {
 				t.Fatalf("decodeFormValues(%v, payload) error = nil, want error", tt.values)
 			}
 		})
+	}
+}
+
+func TestDecodeFormRejectsLargeSliceIndexBeforeAllocation(t *testing.T) {
+	var payload struct {
+		Tags []string `form:"tags"`
+	}
+	values := url.Values{"tags.99999999": []string{"go"}}
+
+	err := decodeFormValues(values, &payload)
+
+	if err == nil {
+		t.Fatalf("decodeFormValues(%v, payload) error = nil, want error", values)
+	}
+	if len(payload.Tags) != 0 {
+		t.Errorf("decodeFormValues(%v, payload).Tags len = %d, want 0", values, len(payload.Tags))
 	}
 }
 
@@ -289,5 +309,18 @@ func TestDecodeFormRejectsMalformedRequestBody(t *testing.T) {
 	err := decodeForm(request, &payload)
 	if err == nil {
 		t.Fatalf("decodeForm(request with malformed body, payload) error = nil, want error")
+	}
+}
+
+func TestDecodeFormRejectsOversizedRequestBody(t *testing.T) {
+	var payload struct {
+		Name string `form:"name"`
+	}
+	request := httptest.NewRequest("POST", "/", strings.NewReader(strings.Repeat("a", int(maxFormBodyBytes)+1)))
+
+	err := decodeForm(request, &payload)
+
+	if err == nil {
+		t.Fatalf("decodeForm(request with %d byte body, payload) error = nil, want error", maxFormBodyBytes+1)
 	}
 }
