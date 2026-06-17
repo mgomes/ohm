@@ -259,8 +259,8 @@ just test-integration
 just check
 ```
 
-`just check` regenerates sqlc output, then runs formatting checks,
-module tidiness checks, vet, and tests.
+`just check` regenerates sqlc output, tidies module files, then runs
+formatting checks, vet, and tests.
 
 Tests that require a database make that requirement explicit.
 
