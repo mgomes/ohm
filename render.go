@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"reflect"
 	"strings"
@@ -255,32 +254,47 @@ func requestContentType(r *http.Request) contentType {
 }
 
 func acceptedContentType(r *http.Request) contentType {
-	fields := strings.Split(r.Header.Get("Accept"), ",")
-	if len(fields) == 0 {
-		return contentTypePlainText
-	}
-	return parseContentType(fields[0])
+	field, _, _ := strings.Cut(r.Header.Get("Accept"), ",")
+	return parseContentType(field)
 }
 
 func parseContentType(raw string) contentType {
-	mediaType, _, err := mime.ParseMediaType(raw)
-	if err != nil {
-		mediaType = strings.TrimSpace(strings.Split(raw, ";")[0])
-	}
-	switch strings.ToLower(mediaType) {
-	case "text/plain":
+	mediaType, _, _ := strings.Cut(raw, ";")
+	mediaType = strings.TrimSpace(mediaType)
+	switch {
+	case asciiEqualFold(mediaType, "text/plain"):
 		return contentTypePlainText
-	case "text/html", "application/xhtml+xml":
+	case asciiEqualFold(mediaType, "text/html"), asciiEqualFold(mediaType, "application/xhtml+xml"):
 		return contentTypeHTML
-	case "application/json", "text/javascript":
+	case asciiEqualFold(mediaType, "application/json"), asciiEqualFold(mediaType, "text/javascript"):
 		return contentTypeJSON
-	case "text/xml", "application/xml":
+	case asciiEqualFold(mediaType, "text/xml"), asciiEqualFold(mediaType, "application/xml"):
 		return contentTypeXML
-	case "application/x-www-form-urlencoded":
+	case asciiEqualFold(mediaType, "application/x-www-form-urlencoded"):
 		return contentTypeForm
 	default:
 		return contentTypeUnknown
 	}
+}
+
+func asciiEqualFold(s, t string) bool {
+	if len(s) != len(t) {
+		return false
+	}
+	for i := range len(s) {
+		sb := s[i]
+		if 'A' <= sb && sb <= 'Z' {
+			sb += 'a' - 'A'
+		}
+		tb := t[i]
+		if 'A' <= tb && tb <= 'Z' {
+			tb += 'a' - 'A'
+		}
+		if sb != tb {
+			return false
+		}
+	}
+	return true
 }
 
 var (
