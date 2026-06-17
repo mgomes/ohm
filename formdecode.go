@@ -43,7 +43,7 @@ func readFormBody(body io.Reader, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("form body exceeds %d byte limit", limit)
+		return nil, NewHTTPError(http.StatusRequestEntityTooLarge, "", fmt.Errorf("form body exceeds %d byte limit", limit))
 	}
 	return data, nil
 }

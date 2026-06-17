@@ -158,6 +158,27 @@ func TestRequestDecodeReadsFormBodyForAnyMethod(t *testing.T) {
 	}
 }
 
+func TestRequestDecodeRejectsOversizedFormBodyAsClientError(t *testing.T) {
+	app := New()
+	app.Post("/posts", func(req *Request) error {
+		var payload formPayload
+		return req.Decode(&payload)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(strings.Repeat("a", int(maxFormBodyBytes)+1)))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusRequestEntityTooLarge)
+	}
+	if got := response.Body.String(); got != http.StatusText(http.StatusRequestEntityTooLarge) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusRequestEntityTooLarge))
+	}
+}
+
 func TestRequestRenderRunsNestedRenderersAndUsesStatus(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
