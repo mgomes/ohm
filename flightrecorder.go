@@ -44,14 +44,23 @@ type FlightRecorder struct {
 	threshold time.Duration
 	logger    *slog.Logger
 
-	// writeMu serializes snapshots: runtime/trace.FlightRecorder.WriteTo fails
-	// when another WriteTo is in progress, so concurrent triggers must queue
-	// rather than drop a high-value snapshot.
-	writeMu sync.Mutex
+	// snapshotMu guards snapshotActive and pendingSnapshot without covering
+	// runtime/trace.FlightRecorder.WriteTo. Concurrent triggers only wait for
+	// this short state transition, not for trace flushes or sink writes.
+	snapshotMu sync.Mutex
+
+	// snapshotActive records that one goroutine owns snapshot writing.
+	snapshotActive bool
 
 	// recording tracks lifecycle separately from the runtime recorder so late
 	// snapshots from abandoned handlers can be skipped or downgraded after Stop.
 	recording atomic.Bool
+
+	// pendingSnapshot records that another trigger arrived while a snapshot was
+	// already being written. The active writer drains pending batches into
+	// follow-up captures instead of making request goroutines wait behind
+	// runtime trace and sink I/O.
+	pendingSnapshot bool
 
 	// seq makes snapshot filenames unique so simultaneous triggers sharing a
 	// reason and correlation id cannot overwrite each other's artifact.
@@ -164,9 +173,54 @@ func (f *FlightRecorder) snapshot(ctx context.Context, reason string) {
 	// line and OpenTelemetry span for the same incident.
 	trace.Log(ctx, "ohm.flight", reason+" "+id)
 
-	f.writeMu.Lock()
-	defer f.writeMu.Unlock()
+	if !f.beginSnapshot(ctx, reason) {
+		return
+	}
 
+	for {
+		f.writeSnapshot(ctx, reason, id)
+
+		if !f.continueSnapshot() {
+			return
+		}
+
+		trace.Log(ctx, "ohm.flight", reason+" "+id)
+		f.logger.LogAttrs(ctx, slog.LevelDebug, "flight snapshot follow-up",
+			slog.String("reason", reason))
+	}
+}
+
+func (f *FlightRecorder) beginSnapshot(ctx context.Context, reason string) bool {
+	f.snapshotMu.Lock()
+	defer f.snapshotMu.Unlock()
+
+	if f.snapshotActive {
+		f.pendingSnapshot = true
+		f.logger.LogAttrs(ctx, slog.LevelDebug, "flight snapshot coalesced",
+			slog.String("reason", reason))
+		return false
+	}
+
+	f.snapshotActive = true
+	f.pendingSnapshot = false
+	return true
+}
+
+func (f *FlightRecorder) continueSnapshot() bool {
+	f.snapshotMu.Lock()
+	defer f.snapshotMu.Unlock()
+
+	if !f.pendingSnapshot || !f.recording.Load() || !f.recorder.Enabled() {
+		f.snapshotActive = false
+		f.pendingSnapshot = false
+		return false
+	}
+
+	f.pendingSnapshot = false
+	return true
+}
+
+func (f *FlightRecorder) writeSnapshot(ctx context.Context, reason string, id string) {
 	name := snapshotName(reason, id, f.seq.Add(1))
 	writer, err := f.sink.Create(name)
 	if err != nil {

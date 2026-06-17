@@ -194,24 +194,71 @@ func TestFlightRecordingTraversalRequestIDStaysInSink(t *testing.T) {
 	}
 }
 
-func TestFlightRecorderSerializesConcurrentSnapshots(t *testing.T) {
+func TestFlightRecorderCoalescesConcurrentSnapshots(t *testing.T) {
 	sink := newMemSink()
-	recorder := startedRecorder(t, sink)
+	blocking := &blockingSink{
+		sink:    sink,
+		created: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	recorder := startedRecorder(t, blocking)
 
-	// Same reason and correlation id for every trigger: snapshots must neither
-	// fail on a concurrent WriteTo nor overwrite each other's filename.
 	ctx := context.WithValue(context.Background(), requestIDKey{}, "req-shared")
+	firstDone := make(chan struct{})
+	go func() {
+		recorder.snapshot(ctx, "slow")
+		close(firstDone)
+	}()
+
+	select {
+	case <-blocking.created:
+	case <-time.After(time.Second):
+		t.Fatalf("first snapshot did not reach sink Create")
+	}
+
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
 			recorder.snapshot(ctx, "slow")
 		})
 	}
-	wg.Wait()
+	contendersDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(contendersDone)
+	}()
 
-	if got := len(sink.names()); got != 8 {
-		t.Errorf("snapshots = %d, want 8 (none dropped or overwritten)", got)
+	select {
+	case <-contendersDone:
+	case <-time.After(time.Second):
+		t.Fatalf("concurrent snapshots queued behind in-progress snapshot, want coalesced")
 	}
+
+	close(blocking.release)
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatalf("first snapshot did not finish after sink release")
+	}
+
+	if got := len(sink.names()); got != 2 {
+		t.Errorf("snapshots = %d, want active snapshot plus one coalesced follow-up", got)
+	}
+}
+
+type blockingSink struct {
+	sink    Sink
+	once    sync.Once
+	created chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSink) Create(name string) (io.WriteCloser, error) {
+	s.once.Do(func() {
+		close(s.created)
+		<-s.release
+	})
+	return s.sink.Create(name)
 }
 
 func TestCorrelationIDPrefersTraceID(t *testing.T) {
