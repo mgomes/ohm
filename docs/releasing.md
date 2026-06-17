@@ -109,7 +109,7 @@ dev
 The GitHub Actions workflow:
 
 - Checks out the full git history so GoReleaser can read tags.
-- Sets up Go from `go.mod`.
+- Sets up the latest available Go 1.25 patch release.
 - Runs `goreleaser release --clean`.
 - Grants `contents: write` so the release and assets can be created.
 
