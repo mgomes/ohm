@@ -68,14 +68,6 @@ type pendingResponseStatusDoneCloneKey struct {
 	request pendingResponseStatusCloneRequestKey
 }
 
-type pendingResponseStatusContextKey struct {
-	context any
-}
-
-type pendingResponseStatusDoneKey struct {
-	done <-chan struct{}
-}
-
 type pendingResponseStatusGroup struct {
 	mu       sync.Mutex
 	pendings []*pendingResponseStatus
@@ -511,29 +503,34 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 	if r == nil {
 		return nil
 	}
-	requestKey := pendingResponseStatusCloneRequestKeyFor(r)
-	if requestKey.isZero() {
-		return nil
-	}
 
 	var keys []any
-	if contextKey, ok := comparableContextKey(r.Context()); ok {
-		keys = append(keys, pendingResponseStatusContextCloneKey{
-			context: contextKey,
-			request: requestKey,
-		})
+	for _, requestKey := range pendingResponseStatusCloneRequestKeysFor(r) {
+		if contextKey, ok := comparableContextKey(r.Context()); ok {
+			keys = append(keys, pendingResponseStatusContextCloneKey{
+				context: contextKey,
+				request: requestKey,
+			})
+		}
+		if done := r.Context().Done(); done != nil {
+			keys = append(keys, pendingResponseStatusDoneCloneKey{
+				done:    done,
+				request: requestKey,
+			})
+		}
 	}
-	if done := r.Context().Done(); done != nil {
-		keys = append(keys, pendingResponseStatusDoneCloneKey{
-			done:    done,
-			request: requestKey,
-		})
+	return keys
+}
+
+func pendingResponseStatusCloneRequestKeysFor(r *http.Request) []pendingResponseStatusCloneRequestKey {
+	key := pendingResponseStatusCloneRequestKeyFor(r)
+	if key.isZero() {
+		return nil
 	}
-	if contextKey, ok := comparableContextKey(r.Context()); ok {
-		keys = append(keys, pendingResponseStatusContextKey{context: contextKey})
-	}
-	if done := r.Context().Done(); done != nil {
-		keys = append(keys, pendingResponseStatusDoneKey{done: done})
+	keys := []pendingResponseStatusCloneRequestKey{key}
+	if key.requestURI != "" && key.url != "" {
+		key.url = ""
+		keys = append(keys, key)
 	}
 	return keys
 }
@@ -557,7 +554,7 @@ func pendingResponseStatusCloneRequestKeyFor(r *http.Request) pendingResponseSta
 }
 
 func (key pendingResponseStatusCloneRequestKey) isZero() bool {
-	return key.url == "" && key.body == 0
+	return key.url == "" && key.requestURI == "" && key.body == 0
 }
 
 func comparableContextKey(ctx context.Context) (any, bool) {

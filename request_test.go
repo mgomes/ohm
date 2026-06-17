@@ -475,6 +475,32 @@ func TestSetStatusWithCanceledContextCleansPendingResponseStatus(t *testing.T) {
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossSharedContextRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render?request=first", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render?request=second", nil).WithContext(ctx)
+
+	SetStatus(first, http.StatusCreated)
+
+	secondResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusOK)
+	}
+
+	firstResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableContextRequests(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
