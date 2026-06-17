@@ -34,6 +34,14 @@ type privateInterfaceError struct {
 	payload any
 }
 
+type privateExportedMapPayload struct {
+	Fields map[string]any
+}
+
+type privateExportedMapError struct {
+	payload privateExportedMapPayload
+}
+
 type typedNilWrapError struct {
 	child error
 }
@@ -61,6 +69,10 @@ func (e privateMapError) Error() string {
 
 func (e privateInterfaceError) Error() string {
 	return fmt.Sprint(e.payload)
+}
+
+func (e privateExportedMapError) Error() string {
+	return fmt.Sprint(e.payload.Fields)
 }
 
 func (e *typedNilWrapError) Error() string {
@@ -545,6 +557,24 @@ func TestHandlerRedactsPrivateInterfaceErrorPayload(t *testing.T) {
 	logger.Error("request failed", slog.Any("failure", privateInterfaceError{
 		payload: map[string]any{
 			"password": "secret",
+		},
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsPrivatePayloadExportedStructuredFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", privateExportedMapError{
+		payload: privateExportedMapPayload{
+			Fields: map[string]any{
+				"password": "secret",
+			},
 		},
 	}))
 

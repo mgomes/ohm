@@ -227,8 +227,8 @@ func (r *Redactor) preservesErrorEncodingAtDepth(value error, depth int) bool {
 	case reflect.Struct:
 		return !hasExportedFields(reflected.Type()) &&
 			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{})) &&
-			!hasPrivateStructuredFields(reflected.Type(), make(map[reflect.Type]struct{}), unwrapsOne, unwrapsMany) &&
-			!r.hasUnsafePrivateFieldValues(reflected, unwrapsOne, unwrapsMany, make(map[uintptr]struct{}), 0)
+			!hasPrivateStructuredFields(reflected.Type(), make(map[reflect.Type]struct{}), unwrapsOne, unwrapsMany, false) &&
+			!r.hasUnsafePrivateFieldValues(reflected, unwrapsOne, unwrapsMany, make(map[uintptr]struct{}), 0, false)
 	case reflect.Map, reflect.Slice, reflect.Array:
 		return false
 	}
@@ -259,6 +259,7 @@ func hasPrivateStructuredFields(
 	seen map[reflect.Type]struct{},
 	allowErrorInterfaces bool,
 	allowErrorCollections bool,
+	inspectExportedFields bool,
 ) bool {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -273,7 +274,7 @@ func hasPrivateStructuredFields(
 	case reflect.Struct:
 		for i := range t.NumField() {
 			field := t.Field(i)
-			if field.IsExported() {
+			if field.IsExported() && !inspectExportedFields {
 				continue
 			}
 			if hasStructuredFieldType(field.Type, seen, allowErrorInterfaces, allowErrorCollections) {
@@ -306,7 +307,7 @@ func hasStructuredFieldType(
 		}
 		return true
 	case reflect.Struct:
-		return hasPrivateStructuredFields(t, seen, allowErrorInterfaces, allowErrorCollections)
+		return hasPrivateStructuredFields(t, seen, allowErrorInterfaces, allowErrorCollections, true)
 	default:
 		return false
 	}
@@ -327,6 +328,7 @@ func (r *Redactor) hasUnsafePrivateFieldValues(
 	allowErrorCollections bool,
 	seenPointers map[uintptr]struct{},
 	depth int,
+	inspectExportedFields bool,
 ) bool {
 	if depth > maxErrorUnwrapDepth {
 		return true
@@ -343,7 +345,7 @@ func (r *Redactor) hasUnsafePrivateFieldValues(
 	t := value.Type()
 	for i := range t.NumField() {
 		field := t.Field(i)
-		if field.IsExported() {
+		if field.IsExported() && !inspectExportedFields {
 			continue
 		}
 		if r.hasUnsafePrivateFieldValue(
@@ -395,7 +397,7 @@ func (r *Redactor) hasUnsafePrivateFieldValue(
 			}
 		}
 	case reflect.Struct:
-		return r.hasUnsafePrivateFieldValues(value, allowErrorInterfaces, allowErrorCollections, seenPointers, depth+1)
+		return r.hasUnsafePrivateFieldValues(value, allowErrorInterfaces, allowErrorCollections, seenPointers, depth+1, true)
 	}
 	return false
 }
@@ -417,8 +419,8 @@ func (r *Redactor) hasUnsafeErrorFieldValue(value reflect.Value, seenPointers ma
 	case reflect.Struct:
 		return hasExportedFields(value.Type()) ||
 			r.hasSensitiveFieldName(value.Type(), make(map[reflect.Type]struct{})) ||
-			hasPrivateStructuredFields(value.Type(), make(map[reflect.Type]struct{}), true, true) ||
-			r.hasUnsafePrivateFieldValues(value, true, true, seenPointers, depth+1)
+			hasPrivateStructuredFields(value.Type(), make(map[reflect.Type]struct{}), true, true, false) ||
+			r.hasUnsafePrivateFieldValues(value, true, true, seenPointers, depth+1, false)
 	case reflect.Map:
 		return true
 	case reflect.Slice, reflect.Array:
