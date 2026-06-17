@@ -325,11 +325,12 @@ func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestContextCopy(t *testi
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	request.Header = nil
 	if request.Context().Done() != nil {
 		t.Fatalf("httptest.NewRequest(%s, %q, nil).Context().Done() is non-nil, want nil", http.MethodGet, "/render")
 	}
 	sharedKey := pendingResponseStatusSharedKeyFor(request)
-	if sharedKey == 0 {
+	if sharedKey.isZero() {
 		t.Fatalf("pendingResponseStatusSharedKeyFor(request) = 0, want non-zero")
 	}
 

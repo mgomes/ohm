@@ -38,7 +38,14 @@ var (
 	pendingResponseStatusBySharedKey sync.Map
 )
 
-type pendingResponseStatusSharedKey uintptr
+type pendingResponseStatusSharedKey struct {
+	method     string
+	url        uintptr
+	header     uintptr
+	body       uintptr
+	host       string
+	requestURI string
+}
 
 func withResponseStatus(r *http.Request) *http.Request {
 	if r == nil {
@@ -284,7 +291,7 @@ func lookupPendingResponseStatus(r *http.Request) (*pendingResponseStatus, bool)
 		}
 	}
 	sharedKey := pendingResponseStatusSharedKeyFor(r)
-	if sharedKey == 0 {
+	if sharedKey.isZero() {
 		return nil, false
 	}
 	if value, ok := pendingResponseStatusBySharedKey.Load(sharedKey); ok {
@@ -316,14 +323,14 @@ func deletePendingResponseStatus(pending *pendingResponseStatus) {
 	if pending.done != nil {
 		pendingResponseStatusByDone.CompareAndDelete(pending.done, pending)
 	}
-	if pending.sharedKey != 0 {
+	if !pending.sharedKey.isZero() {
 		pendingResponseStatusBySharedKey.CompareAndDelete(pending.sharedKey, pending)
 	}
 	stopPendingResponseStatusCleanup(pending)
 }
 
 func storePendingResponseStatusBySharedKey(pending *pendingResponseStatus, status int32) {
-	if pending.sharedKey == 0 {
+	if pending.sharedKey.isZero() {
 		return
 	}
 	actual, loaded := pendingResponseStatusBySharedKey.LoadOrStore(pending.sharedKey, pending)
@@ -334,10 +341,34 @@ func storePendingResponseStatusBySharedKey(pending *pendingResponseStatus, statu
 }
 
 func pendingResponseStatusSharedKeyFor(r *http.Request) pendingResponseStatusSharedKey {
-	if r == nil || r.Header == nil {
+	if r == nil {
+		return pendingResponseStatusSharedKey{}
+	}
+	return pendingResponseStatusSharedKey{
+		method:     r.Method,
+		url:        pointerIdentity(r.URL),
+		header:     pointerIdentity(r.Header),
+		body:       pointerIdentity(r.Body),
+		host:       r.Host,
+		requestURI: r.RequestURI,
+	}
+}
+
+func (key pendingResponseStatusSharedKey) isZero() bool {
+	return key.url == 0 && key.header == 0 && key.body == 0
+}
+
+func pointerIdentity(v any) uintptr {
+	if v == nil {
 		return 0
 	}
-	return pendingResponseStatusSharedKey(reflect.ValueOf(r.Header).Pointer())
+	value := reflect.ValueOf(v)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice, reflect.String, reflect.UnsafePointer:
+		return value.Pointer()
+	default:
+		return 0
+	}
 }
 
 func drainBody(r io.Reader) {
