@@ -3,6 +3,7 @@ package scrub
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -227,6 +228,46 @@ func TestHandlerRedactsSlogOutput(t *testing.T) {
 	headers := got["headers"].(map[string]any)
 	if headers["Cookie"] != defaultReplacement {
 		t.Errorf("logged headers.Cookie = %v, want %v", headers["Cookie"], defaultReplacement)
+	}
+}
+
+func TestHandlerPreservesErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("error", errors.New("connection refused")))
+
+	output := buf.String()
+	if !strings.Contains(output, "connection refused") {
+		t.Errorf("logged output %q contains error message %q = false, want true", output, "connection refused")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["error"] != "connection refused" {
+		t.Errorf("logged error = %v, want %v", got["error"], "connection refused")
+	}
+}
+
+func TestHandlerRedactsSensitiveErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("password", errors.New("secret")))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["password"] != defaultReplacement {
+		t.Errorf("logged password = %v, want %v", got["password"], defaultReplacement)
 	}
 }
 

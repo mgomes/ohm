@@ -135,6 +135,8 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 		return nil, false
 	case Sensitive:
 		return r.replacementValue(), true
+	case error:
+		return value, false
 	case slog.Attr:
 		return r.Attr(value), true
 	case []slog.Attr:
