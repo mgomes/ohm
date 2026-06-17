@@ -57,9 +57,10 @@ if err := req.Decode(&form); err != nil {
 
 errors := ohm.Validate(form)
 if errors.Any() {
-	return htmx.Render(req, http.StatusUnprocessableEntity, ohm.Fragment(
-		"form",
-		views.PostForm(form, errors),
+	view := PostFormView{Form: form, Errors: errors}
+	return htmx.Render(req, http.StatusUnprocessableEntity, ohm.View(
+		pages.PostsNew(view),
+		ohm.Fragment("post-form", partials.PostForm(view)),
 	))
 }
 ```
