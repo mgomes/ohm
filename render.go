@@ -555,7 +555,7 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 		keys = append(keys, key)
 	}
 	for _, requestKey := range pendingResponseStatusCloneRequestKeysFor(r) {
-		// Deep clone matching needs a clone-stable discriminator.
+		// Deep no-body clones cannot be distinguished from unrelated same-context requests.
 		if requestKey.body == 0 {
 			continue
 		}

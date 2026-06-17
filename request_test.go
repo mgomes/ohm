@@ -709,6 +709,31 @@ func TestSetStatusBeforeHTTPHandlerDoesNotMatchNoBodyDetachedBackgroundClone(t *
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerDoesNotMatchNoBodyRequestClone(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	SetStatus(request, http.StatusCreated)
+
+	cloneResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(cloneResponse, request.Clone(request.Context()))
+	if cloneResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s no-body clone) status = %d, want %d", request.Method, request.URL.String(), cloneResponse.Code, http.StatusOK)
+	}
+
+	originalResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(originalResponse, request)
+	if originalResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s original no-body request) status = %d, want %d", request.Method, request.URL.String(), originalResponse.Code, http.StatusCreated)
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableContextRequests(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
