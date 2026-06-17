@@ -187,6 +187,9 @@ func (r *Redactor) preservesErrorEncodingAtDepth(value error, depth int) bool {
 	if depth > maxErrorUnwrapDepth {
 		return false
 	}
+	if implementsEncoding(value) {
+		return false
+	}
 
 	reflected := reflect.ValueOf(value)
 	for reflected.Kind() == reflect.Interface || reflected.Kind() == reflect.Pointer {

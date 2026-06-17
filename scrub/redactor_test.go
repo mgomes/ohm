@@ -30,6 +30,10 @@ type privateMapError struct {
 	fields map[string]any
 }
 
+type customEncodedError struct {
+	password string
+}
+
 func (e credentialError) Error() string {
 	return e.Message + ": " + e.Password
 }
@@ -40,6 +44,16 @@ func (e privateCredentialError) Error() string {
 
 func (e privateMapError) Error() string {
 	return fmt.Sprint(e.fields)
+}
+
+func (e customEncodedError) Error() string {
+	return "custom encoded error"
+}
+
+func (e customEncodedError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]string{
+		"password": e.password,
+	})
 }
 
 func (c customEncodedCredentials) MarshalJSON() ([]byte, error) {
@@ -362,6 +376,20 @@ func TestHandlerRedactsPrivateMapErrorPayload(t *testing.T) {
 		fields: map[string]any{
 			"password": "secret",
 		},
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsCustomEncodedErrorPayload(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", customEncodedError{
+		password: "secret",
 	}))
 
 	output := buf.String()
