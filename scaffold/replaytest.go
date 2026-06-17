@@ -3,6 +3,7 @@ package scaffold
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/format"
 	"os"
@@ -130,13 +131,24 @@ func readModulePath(path string) (string, error) {
 
 	cmd := exec.Command("go", "list", "-m", "-f", "{{.Path}}")
 	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
+	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("resolve module path from %s: %w\n%s", path, err, output)
+		var exitErr *exec.ExitError
+		message := ""
+		if errors.As(err, &exitErr) {
+			message = strings.TrimSpace(string(exitErr.Stderr))
+		}
+		if message == "" {
+			return "", fmt.Errorf("resolve module path from %s: %w", path, err)
+		}
+		return "", fmt.Errorf("resolve module path from %s: %w: %s", path, err, message)
 	}
 	module := strings.TrimSpace(string(output))
 	if module == "" {
 		return "", fmt.Errorf("%s does not declare a module path", path)
+	}
+	if strings.ContainsAny(module, "\r\n") {
+		return "", fmt.Errorf("%s resolved module path must be a single line: %q", path, module)
 	}
 	return module, nil
 }
