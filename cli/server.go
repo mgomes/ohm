@@ -65,10 +65,10 @@ func WithServerRunner(runner ServerRunner) ServerOption {
 // WithShutdownHook registers a hook run during graceful shutdown. Hooks run in
 // reverse registration order, sharing the single shutdown budget with the
 // server drain so total shutdown stays bounded by the shutdown timeout.
-func WithShutdownHook(hook ShutdownHook) ServerOption {
+func WithShutdownHook(hook func(context.Context) error) ServerOption {
 	return func(cfg *serverConfig) {
 		if hook != nil {
-			cfg.shutdownHooks = append(cfg.shutdownHooks, hook)
+			cfg.shutdownHooks = append(cfg.shutdownHooks, ShutdownHook(hook))
 		}
 	}
 }

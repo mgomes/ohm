@@ -137,8 +137,7 @@ func (f *FlightRecorder) Start() error {
 	return f.recorder.Start()
 }
 
-// Stop stops recording. Its signature satisfies cli.ShutdownHook so it can be
-// registered directly as a server shutdown hook.
+// Stop stops recording. It can be passed directly to cli.WithShutdownHook.
 func (f *FlightRecorder) Stop(context.Context) error {
 	f.recorder.Stop()
 	return nil
