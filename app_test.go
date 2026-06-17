@@ -454,6 +454,71 @@ func (w *flushErrorRecorder) FlushError() error {
 	return w.flushErr
 }
 
+func TestAppRawResponseWriterPreservesCustomExtensions(t *testing.T) {
+	var gotCustom bool
+	app := New()
+	app.Get("/custom", func(req *Request) error {
+		custom, ok := req.RawResponseWriter().(customResponseWriterExtension)
+		gotCustom = ok
+		if !ok {
+			return errors.New("custom response writer extension missing")
+		}
+
+		req.PlainText(http.StatusOK, custom.CustomResponseWriterValue())
+		return nil
+	})
+
+	res := &customExtensionRecorder{value: "custom"}
+	request := httptest.NewRequest(http.MethodGet, "/custom", nil)
+
+	app.ServeHTTP(res, request)
+
+	if !gotCustom {
+		t.Errorf("Request.RawResponseWriter() custom extension = false, want true")
+	}
+	if res.status != http.StatusOK {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusOK)
+	}
+	if res.body.String() != "custom" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.body.String(), "custom")
+	}
+}
+
+type customResponseWriterExtension interface {
+	CustomResponseWriterValue() string
+}
+
+type customExtensionRecorder struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+	value  string
+}
+
+func (w *customExtensionRecorder) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *customExtensionRecorder) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(body)
+}
+
+func (w *customExtensionRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *customExtensionRecorder) CustomResponseWriterValue() string {
+	return w.value
+}
+
 func TestAppUsesCustomErrorHandler(t *testing.T) {
 	app := New(WithErrorHandler(func(req *Request, err error) {
 		req.PlainText(http.StatusTeapot, err.Error())

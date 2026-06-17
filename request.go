@@ -7,8 +7,9 @@ import (
 
 // Request is the Ohm request and response boundary passed to handlers.
 type Request struct {
-	w http.ResponseWriter
-	r *http.Request
+	w    http.ResponseWriter
+	rawW http.ResponseWriter
+	r    *http.Request
 }
 
 // Binder decodes and validates a request body.
@@ -22,7 +23,11 @@ type Renderer interface {
 }
 
 func newRequest(w http.ResponseWriter, r *http.Request) *Request {
-	return &Request{w: w, r: r}
+	return newRequestWithRawResponseWriter(w, w, r)
+}
+
+func newRequestWithRawResponseWriter(w http.ResponseWriter, rawW http.ResponseWriter, r *http.Request) *Request {
+	return &Request{w: w, rawW: rawW, r: r}
 }
 
 // Context returns the standard Go request context.
@@ -35,9 +40,14 @@ func (r *Request) HTTPRequest() *http.Request {
 	return r.r
 }
 
-// ResponseWriter returns the underlying HTTP response writer escape hatch.
+// ResponseWriter returns the tracked HTTP response writer used by Ohm.
 func (r *Request) ResponseWriter() http.ResponseWriter {
 	return r.w
+}
+
+// RawResponseWriter returns the original HTTP response writer escape hatch.
+func (r *Request) RawResponseWriter() http.ResponseWriter {
+	return r.rawW
 }
 
 // Param returns a route parameter by name.

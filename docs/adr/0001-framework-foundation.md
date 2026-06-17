@@ -51,6 +51,9 @@ behind framework-level routing, handler, middleware, rendering, and error APIs.
 This does not mean replacing Go's HTTP model with implicit behavior. It means
 application code should usually speak Ohm while advanced users retain escape
 hatches to ordinary `http.Handler`, `http.Request`, and `http.ResponseWriter`.
+The tracked `Request.ResponseWriter()` should be used for normal response
+writes; `Request.RawResponseWriter()` exposes server- or middleware-specific
+writer extensions when an integration needs the original writer.
 
 Ohm will use `handlers` as the HTTP boundary name instead of `controllers`.
 The initial application architecture is:
