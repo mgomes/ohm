@@ -72,7 +72,7 @@ type pendingResponseStatusDoneCloneKey struct {
 	request pendingResponseStatusCloneRequestKey
 }
 
-type pendingResponseStatusRequestCloneKey struct {
+type pendingResponseStatusBodyCloneKey struct {
 	request pendingResponseStatusCloneRequestKey
 }
 
@@ -542,20 +542,23 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 	}
 
 	var keys []any
+	done := r.Context().Done()
 	for _, requestKey := range pendingResponseStatusCloneRequestKeysFor(r) {
-		if contextKey, ok := comparableContextKey(r.Context()); ok {
+		if contextKey, ok := comparableContextKey(r.Context()); ok && (done != nil || requestKey.body != 0) {
 			keys = append(keys, pendingResponseStatusContextCloneKey{
 				context: contextKey,
 				request: requestKey,
 			})
 		}
-		if done := r.Context().Done(); done != nil {
+		if done != nil {
 			keys = append(keys, pendingResponseStatusDoneCloneKey{
 				done:    done,
 				request: requestKey,
 			})
 		}
-		keys = append(keys, pendingResponseStatusRequestCloneKey{request: requestKey})
+		if requestKey.body != 0 {
+			keys = append(keys, pendingResponseStatusBodyCloneKey{request: requestKey})
+		}
 	}
 	return keys
 }

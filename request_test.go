@@ -381,6 +381,9 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestClone(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
 
 	handler.ServeHTTP(response, request)
 
@@ -410,6 +413,7 @@ func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestCloneWithDerivedCont
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
 	if request.Context().Done() != nil {
 		t.Fatalf("httptest.NewRequest(%s, %q, nil).Context().Done() is non-nil, want nil", http.MethodGet, "/render")
 	}
@@ -438,6 +442,7 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestCloneWithDerivedBackgroundCont
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
 
 	handler.ServeHTTP(response, request)
 
@@ -463,6 +468,9 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRewrittenRequestClone(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/prefix/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
 
 	handler.ServeHTTP(response, request)
 
@@ -477,8 +485,10 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRewrittenRequestClone(t *testing.T) {
 }
 
 func TestSetStatusBeforeHTTPHandlerClearsAmbiguousRequestCloneStatuses(t *testing.T) {
-	first := httptest.NewRequest(http.MethodGet, "/render", nil)
-	second := httptest.NewRequest(http.MethodGet, "/render", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
 
 	SetStatus(first, http.StatusCreated)
 	SetStatus(second, http.StatusAccepted)
@@ -586,6 +596,30 @@ func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossSharedContextRequests(t *tes
 	app.HTTPHandler().ServeHTTP(firstResponse, first)
 	if firstResponse.Code != http.StatusCreated {
 		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossIdenticalBackgroundRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	first := httptest.NewRequest(http.MethodGet, "/render", nil)
+	second := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	SetStatus(first, http.StatusCreated)
+
+	secondResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with identical background request) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusOK)
+	}
+
+	firstResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s original background request) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
 	}
 }
 
@@ -1016,6 +1050,14 @@ func (c *renderChild) Render(http.ResponseWriter, *http.Request) error {
 }
 
 type statusContextKey struct{}
+
+type statusReadCloser struct {
+	*strings.Reader
+}
+
+func (*statusReadCloser) Close() error {
+	return nil
+}
 
 type statusPayload struct {
 	Message string `json:"message"`
