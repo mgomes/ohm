@@ -42,6 +42,26 @@ NO_EXPANSION=$DATABASE_URL
 	}
 }
 
+func TestParseSingleQuotedValuesAreLiteral(t *testing.T) {
+	input := `
+PATH_VAL='C:\new\table'
+SECRET='a\b'
+`
+
+	got, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v, want nil", input, err)
+	}
+
+	want := map[string]string{
+		"PATH_VAL": `C:\new\table`,
+		"SECRET":   `a\b`,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("Parse(%q) = %v, want %v", input, got, want)
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	for _, input := range []string{
 		"",

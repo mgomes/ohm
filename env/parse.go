@@ -80,7 +80,15 @@ func parseLine(line string) (string, string, bool, error) {
 	}
 
 	if rawValue[0] == '\'' || rawValue[0] == '"' {
-		value, rest, err := parseQuotedValue(rawValue, rawValue[0])
+		var value string
+		var rest string
+		var err error
+		switch rawValue[0] {
+		case '\'':
+			value, rest, err = parseSingleQuotedValue(rawValue)
+		case '"':
+			value, rest, err = parseDoubleQuotedValue(rawValue)
+		}
 		if err != nil {
 			return "", "", false, err
 		}
@@ -94,7 +102,19 @@ func parseLine(line string) (string, string, bool, error) {
 	return key, trimUnquotedValue(rawValue), true, nil
 }
 
-func parseQuotedValue(rawValue string, quote byte) (string, string, error) {
+func parseSingleQuotedValue(rawValue string) (string, string, error) {
+	for i := range len(rawValue) {
+		if i == 0 {
+			continue
+		}
+		if rawValue[i] == '\'' {
+			return rawValue[1:i], rawValue[i+1:], nil
+		}
+	}
+	return "", "", fmt.Errorf("unterminated quoted value")
+}
+
+func parseDoubleQuotedValue(rawValue string) (string, string, error) {
 	var builder strings.Builder
 	escaped := false
 
@@ -123,7 +143,7 @@ func parseQuotedValue(rawValue string, quote byte) (string, string, error) {
 		switch char {
 		case '\\':
 			escaped = true
-		case quote:
+		case '"':
 			return builder.String(), rawValue[i+1:], nil
 		default:
 			builder.WriteByte(char)
