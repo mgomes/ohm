@@ -3,6 +3,8 @@ package ohm
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -179,6 +181,211 @@ func TestRequestDecodeRejectsOversizedFormBodyAsClientError(t *testing.T) {
 	}
 	if got := response.Body.String(); got != http.StatusText(http.StatusRequestEntityTooLarge) {
 		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusRequestEntityTooLarge))
+	}
+}
+
+func TestRequestDecodeRejectsMalformedClientInputAsBadRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+	}{
+		{name: "malformed JSON", contentType: "application/json", body: `{"title":`},
+		{name: "empty JSON", contentType: "application/json", body: ""},
+		{name: "unsupported content type", contentType: "text/plain", body: "title=hello"},
+		{name: "malformed form", contentType: "application/x-www-form-urlencoded", body: "title=%zz"},
+		{name: "unknown form field", contentType: "application/x-www-form-urlencoded", body: "unknown=hello"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := New()
+			app.Post("/posts", func(req *Request) error {
+				var payload formPayload
+				return req.Decode(&payload)
+			})
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", tt.contentType)
+
+			app.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("App.ServeHTTP(%s %s, %s) status = %d, want %d", request.Method, request.URL.Path, tt.contentType, response.Code, http.StatusBadRequest)
+			}
+			if got := response.Body.String(); got != http.StatusText(http.StatusBadRequest) {
+				t.Errorf("App.ServeHTTP(%s %s, %s) body = %q, want %q", request.Method, request.URL.Path, tt.contentType, got, http.StatusText(http.StatusBadRequest))
+			}
+		})
+	}
+}
+
+func TestRequestBindDecodeErrorPreservesUnderlyingError(t *testing.T) {
+	var gotErr error
+	app := New(WithErrorHandler(func(req *Request, err error) {
+		gotErr = err
+		status, message := ErrorResponse(err)
+		req.PlainText(status, message)
+	}))
+	app.Post("/login", func(req *Request) error {
+		var payload bindPayload
+		return req.Bind(&payload)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"name":`))
+	request.Header.Set("Content-Type", "application/json")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusBadRequest)
+	}
+	var decodeErr *DecodeError
+	if !errors.As(gotErr, &decodeErr) {
+		t.Fatalf("Request.Bind(malformed JSON) error = %v, want *DecodeError", gotErr)
+	}
+	if decodeErr.Status != http.StatusBadRequest {
+		t.Errorf("DecodeError.Status = %d, want %d", decodeErr.Status, http.StatusBadRequest)
+	}
+	if !errors.Is(gotErr, io.ErrUnexpectedEOF) {
+		t.Errorf("Request.Bind(malformed JSON) error = %v, want wrapped %v", gotErr, io.ErrUnexpectedEOF)
+	}
+}
+
+func TestRequestDecodeInvalidTargetRemainsInternalServerError(t *testing.T) {
+	app := New()
+	app.Post("/posts", func(req *Request) error {
+		var payload formPayload
+		return req.Decode(payload)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(`{"title":"hello"}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusInternalServerError)
+	}
+	if got := response.Body.String(); got != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusInternalServerError))
+	}
+}
+
+func TestRequestDecodeInvalidFormMapTargetRemainsInternalServerError(t *testing.T) {
+	tests := []struct {
+		name   string
+		decode func(*Request) error
+	}{
+		{
+			name: "non string key",
+			decode: func(req *Request) error {
+				var payload map[int]string
+				return req.Decode(&payload)
+			},
+		},
+		{
+			name: "unsupported value",
+			decode: func(req *Request) error {
+				var payload map[string]int
+				return req.Decode(&payload)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := New()
+			app.Post("/posts", tt.decode)
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("value=ok"))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			app.ServeHTTP(response, request)
+
+			if response.Code != http.StatusInternalServerError {
+				t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusInternalServerError)
+			}
+			if got := response.Body.String(); got != http.StatusText(http.StatusInternalServerError) {
+				t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusInternalServerError))
+			}
+		})
+	}
+}
+
+func TestRequestDecodeInvalidFormStructTargetRemainsInternalServerError(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		decode func(*Request) error
+	}{
+		{
+			name: "nested non string map key",
+			body: "bad.foo=bar",
+			decode: func(req *Request) error {
+				var payload struct {
+					Bad map[int]string `form:"bad"`
+				}
+				return req.Decode(&payload)
+			},
+		},
+		{
+			name: "unsupported field type",
+			body: "bad=x",
+			decode: func(req *Request) error {
+				var payload struct {
+					Bad chan string `form:"bad"`
+				}
+				return req.Decode(&payload)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := New()
+			app.Post("/posts", tt.decode)
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			app.ServeHTTP(response, request)
+
+			if response.Code != http.StatusInternalServerError {
+				t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusInternalServerError)
+			}
+			if got := response.Body.String(); got != http.StatusText(http.StatusInternalServerError) {
+				t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusInternalServerError))
+			}
+		})
+	}
+}
+
+func TestRequestDecodeInvalidFormScalarRemainsBadRequest(t *testing.T) {
+	app := New()
+	app.Post("/posts", func(req *Request) error {
+		var payload struct {
+			Count int `form:"count"`
+		}
+		return req.Decode(&payload)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("count=many"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusBadRequest)
+	}
+	if got := response.Body.String(); got != http.StatusText(http.StatusBadRequest) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusBadRequest))
 	}
 }
 

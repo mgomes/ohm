@@ -171,24 +171,76 @@ func decodeRequest(r *http.Request, v any) error {
 	if r == nil {
 		return fmt.Errorf("decode request is required")
 	}
-	if v == nil {
-		return fmt.Errorf("decode target is required")
+	if err := validateDecodeTarget(v); err != nil {
+		return err
 	}
 	if r.Body == nil {
-		return io.EOF
+		return decodeClientInputError(io.EOF)
 	}
 
 	switch requestContentType(r) {
 	case contentTypeJSON:
 		defer drainBody(r.Body)
-		return json.NewDecoder(r.Body).Decode(v)
+		if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+			return decodeClientInputError(err)
+		}
+		return nil
 	case contentTypeXML:
 		defer drainBody(r.Body)
-		return xml.NewDecoder(r.Body).Decode(v)
+		if err := xml.NewDecoder(r.Body).Decode(v); err != nil {
+			return decodeClientInputError(err)
+		}
+		return nil
 	case contentTypeForm:
-		return decodeForm(r, v)
+		if err := validateFormDecodeTarget(v); err != nil {
+			return err
+		}
+		if err := decodeForm(r, v); err != nil {
+			return decodeClientInputError(err)
+		}
+		return nil
 	default:
-		return errors.New("ohm: unable to automatically decode the request content type")
+		return decodeClientInputError(errors.New("ohm: unable to automatically decode the request content type"))
+	}
+}
+
+func validateDecodeTarget(v any) error {
+	if v == nil {
+		return fmt.Errorf("decode target is required")
+	}
+	value := reflect.ValueOf(v)
+	if value.Kind() != reflect.Ptr || value.IsNil() {
+		return fmt.Errorf("decode target must be a non-nil pointer")
+	}
+	return nil
+}
+
+func validateFormDecodeTarget(v any) error {
+	target := reflect.ValueOf(v).Elem()
+	if target.Type() == formURLValuesType || target.Kind() == reflect.Struct {
+		return nil
+	}
+	if target.Kind() == reflect.Map {
+		return validateTopLevelFormMapTarget(target.Type())
+	}
+	return fmt.Errorf("form decode target must point to a struct, map, or url.Values")
+}
+
+func decodeClientInputError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return err
+	}
+	var targetErr *formTargetError
+	if errors.As(err, &targetErr) {
+		return err
+	}
+	return &DecodeError{
+		Status: http.StatusBadRequest,
+		Err:    err,
 	}
 }
 
