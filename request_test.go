@@ -729,6 +729,43 @@ func TestSetStatusFromOuterHandlerDoesNotSeedInternalSubrequest(t *testing.T) {
 	}
 }
 
+func TestSetStatusFromMiddlewareDoesNotSeedHandlerInternalSubrequest(t *testing.T) {
+	app := New()
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/outer" {
+				SetStatus(r, http.StatusAccepted)
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	app.Get("/inner", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	app.Get("/outer", func(req *Request) error {
+		innerRequest := req.HTTPRequest().Clone(req.HTTPRequest().Context())
+		innerRequest.URL.Path = "/inner"
+		innerRequest.RequestURI = "/inner"
+		innerResponse := httptest.NewRecorder()
+
+		app.ServeHTTP(innerResponse, innerRequest)
+		if innerResponse.Code != http.StatusOK {
+			t.Errorf("App.ServeHTTP(%s %s cloned after middleware SetStatus) status = %d, want %d", innerRequest.Method, innerRequest.URL.Path, innerResponse.Code, http.StatusOK)
+		}
+
+		return req.Render(&statusPayload{})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/outer", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
 func TestSetStatusDoesNotRaceWithRequestContextReaders(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {

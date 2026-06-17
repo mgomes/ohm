@@ -284,6 +284,7 @@ func markResponseStatusHandlerStarted(r *http.Request) {
 	state, ok := responseStatusStateFromRequest(r)
 	if ok {
 		state.handlerStarted.Store(true)
+		state.seedable.Store(false)
 	}
 }
 
