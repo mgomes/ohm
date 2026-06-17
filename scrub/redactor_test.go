@@ -21,8 +21,16 @@ type credentialError struct {
 	Password string
 }
 
+type privateCredentialError struct {
+	password string
+}
+
 func (e credentialError) Error() string {
 	return e.Message + ": " + e.Password
+}
+
+func (e privateCredentialError) Error() string {
+	return e.password
 }
 
 func (c customEncodedCredentials) MarshalJSON() ([]byte, error) {
@@ -304,6 +312,20 @@ func TestHandlerRedactsStructuredErrorFields(t *testing.T) {
 	}
 	if failure["Password"] != defaultReplacement {
 		t.Errorf("logged failure.Password = %v, want %v", failure["Password"], defaultReplacement)
+	}
+}
+
+func TestHandlerRedactsPrivateSensitiveErrorFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", privateCredentialError{
+		password: "secret",
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
 	}
 }
 

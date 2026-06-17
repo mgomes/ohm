@@ -136,7 +136,7 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 	case Sensitive:
 		return r.replacementValue(), true
 	case error:
-		if preservesErrorEncoding(value) {
+		if r.preservesErrorEncoding(value) {
 			return value, false
 		}
 	case slog.Attr:
@@ -166,7 +166,7 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 	return r.reflectAny(value)
 }
 
-func preservesErrorEncoding(value error) bool {
+func (r *Redactor) preservesErrorEncoding(value error) bool {
 	reflected := reflect.ValueOf(value)
 	for reflected.Kind() == reflect.Interface || reflected.Kind() == reflect.Pointer {
 		if reflected.IsNil() {
@@ -177,7 +177,8 @@ func preservesErrorEncoding(value error) bool {
 
 	switch reflected.Kind() {
 	case reflect.Struct:
-		return !hasExportedFields(reflected.Type())
+		return !hasExportedFields(reflected.Type()) &&
+			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{}))
 	case reflect.Map, reflect.Slice, reflect.Array:
 		return false
 	default:
@@ -190,6 +191,36 @@ func hasExportedFields(t reflect.Type) bool {
 		if t.Field(i).IsExported() {
 			return true
 		}
+	}
+	return false
+}
+
+func (r *Redactor) hasSensitiveFieldName(t reflect.Type, seen map[reflect.Type]struct{}) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if _, ok := seen[t]; ok {
+		return false
+	}
+	seen[t] = struct{}{}
+
+	switch t.Kind() {
+	case reflect.Struct:
+		for i := range t.NumField() {
+			field := t.Field(i)
+			if r.SensitiveKey(field.Name) {
+				return true
+			}
+			if key, ok := fieldKey(field); ok && r.SensitiveKey(key) {
+				return true
+			}
+			if r.hasSensitiveFieldName(field.Type, seen) {
+				return true
+			}
+		}
+	case reflect.Map, reflect.Slice, reflect.Array:
+		return r.hasSensitiveFieldName(t.Elem(), seen)
 	}
 	return false
 }
