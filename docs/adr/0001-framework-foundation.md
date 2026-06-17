@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Accepted.
+
+View-system defaults amended by [ADR 0012](0012-html-template-default-views.md)
+on 2026-06-07.
 
 ## Context
 
@@ -36,8 +39,8 @@ Ohm will use these defaults:
 - A CLI-first boot model where every app can start and operate through its own
   binary.
 - A built-in `justfile` convention for common development tasks.
-- A first-class server-rendered view system, with `templ` as the preferred
-  default unless implementation work proves it is the wrong fit.
+- A first-class server-rendered view system. ADR 0012 later selected the
+  standard library `html/template` package as the default.
 - `goose` as the default migration tool, with support for both up and down
   migrations.
 - Postgres as the default database, using `pgx`.
@@ -56,7 +59,7 @@ The initial application architecture is:
 cmd/myapp/          CLI entrypoint
 internal/app/       app wiring, config, logger, router, dependencies
 internal/handlers/  HTTP handlers, request parsing, response rendering
-internal/views/     templ views, layouts, components
+internal/views/     server-rendered views, templates, layouts, components
 internal/services/  business workflows and transactions
 internal/db/        db connection, migrations, sqlc generated queries
 migrations/         goose migrations
