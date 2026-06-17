@@ -91,6 +91,42 @@ func TestGenerateReplayTestWritesRegressionTest(t *testing.T) {
 	runGo(t, destination, "test", "./...")
 }
 
+func TestGenerateReplayTestIgnoresGoListStderr(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "journal")
+	if err := GenerateApp(App{
+		Destination: destination,
+		Module:      "example.com/journal",
+		Database:    DatabaseSQLite,
+		OhmVersion:  "v0.0.0",
+	}); err != nil {
+		t.Fatalf("GenerateApp(journal) error = %v, want nil", err)
+	}
+	snapshotPath := filepath.Join(destination, "tmp", "replays", "home.json")
+	writeReplaySnapshot(t, snapshotPath, replay.Snapshot{
+		Version: 1,
+		Method:  http.MethodGet,
+		Path:    "/",
+		ExpectedResponse: &replay.ExpectedResponse{
+			Status: http.StatusOK,
+		},
+	})
+
+	prependFakeGo(t, `#!/bin/sh
+printf 'go: downloading go1.25.0 (darwin/arm64)\n' >&2
+printf 'example.com/journal\n'
+`)
+	t.Chdir(destination)
+	result, err := GenerateReplayTest(ReplayTest{SnapshotPath: snapshotPath})
+	if err != nil {
+		t.Fatalf("GenerateReplayTest(home snapshot) error = %v, want nil", err)
+	}
+
+	body := readFile(t, filepath.Join(destination, result.CreatedFile))
+	if !strings.Contains(body, `"example.com/journal/internal/app"`) {
+		t.Errorf("GenerateReplayTest(home snapshot) test = %q, want generated app import without stderr", body)
+	}
+}
+
 func TestGenerateReplayTestRequiresExpectedResponse(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "journal")
 	if err := GenerateApp(App{
@@ -280,6 +316,21 @@ func TestGenerateReplayTestDoesNotOverwriteExistingFile(t *testing.T) {
 	}
 }
 
+func TestReadModulePathRejectsMultilineOutput(t *testing.T) {
+	prependFakeGo(t, `#!/bin/sh
+printf 'example.com/journal\nextra\n'
+`)
+	t.Chdir(t.TempDir())
+
+	_, err := readModulePath("go.mod")
+	if err == nil {
+		t.Fatalf("readModulePath(go.mod) error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "single line") {
+		t.Errorf("readModulePath(go.mod) error = %v, want single-line context", err)
+	}
+}
+
 func writeReplaySnapshot(t *testing.T, path string, snapshot replay.Snapshot) {
 	t.Helper()
 
@@ -294,4 +345,15 @@ func writeReplaySnapshot(t *testing.T, path string, snapshot replay.Snapshot) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("os.WriteFile(%q) error = %v, want nil", path, err)
 	}
+}
+
+func prependFakeGo(t *testing.T, body string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go")
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", path, err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

@@ -306,6 +306,32 @@ func TestNewCommandAcceptsExplicitOhmVersion(t *testing.T) {
 	}
 }
 
+func TestResolveLatestOhmVersionIgnoresGoListStderr(t *testing.T) {
+	prependFakeGo(t, `#!/bin/sh
+printf 'go: downloading go1.25.0 (darwin/arm64)\n' >&2
+printf '{"Version":"v1.2.3"}\n'
+`)
+
+	version, err := resolveLatestOhmVersion(context.Background())
+	if err != nil {
+		t.Fatalf("resolveLatestOhmVersion() error = %v, want nil", err)
+	}
+	if version != "v1.2.3" {
+		t.Errorf("resolveLatestOhmVersion() = %q, want %q", version, "v1.2.3")
+	}
+}
+
+func prependFakeGo(t *testing.T, body string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go")
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("os.WriteFile(%q) error = %v, want nil", path, err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func writeCLIReplaySnapshot(t *testing.T, path string, snapshot replay.Snapshot) {
 	t.Helper()
 
