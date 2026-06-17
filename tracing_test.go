@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func newSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
@@ -148,6 +149,38 @@ func TestTracingExtractsPropagatorInstalledAfterConstruction(t *testing.T) {
 	span := recorder.Ended()[0]
 	if got := span.SpanContext().TraceID().String(); got != upstreamTraceID {
 		t.Errorf("server span trace id = %q, want %q (joined upstream trace)", got, upstreamTraceID)
+	}
+}
+
+func TestTracingSkipsResponseTrackingWhenSpanIsNotRecording(t *testing.T) {
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(noop.NewTracerProvider())
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	recorder := httptest.NewRecorder()
+	handler := Tracing()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if w != recorder {
+			t.Errorf("response writer = %T, want original recorder", w)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ok", nil))
+}
+
+func BenchmarkTracingDisabled(b *testing.B) {
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(noop.NewTracerProvider())
+	b.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	handler := Tracing()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/ok", nil)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		handler.ServeHTTP(httptest.NewRecorder(), request)
 	}
 }
 

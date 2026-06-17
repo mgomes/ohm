@@ -42,8 +42,13 @@ func Tracing() Middleware {
 			)
 			defer span.End()
 
-			tracked, state := trackResponse(w)
 			r = r.WithContext(ctx)
+			if !span.IsRecording() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			tracked, state := trackResponse(w)
 			next.ServeHTTP(tracked, r)
 
 			recordResponseSpan(span, r, state.status)
