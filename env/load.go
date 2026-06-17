@@ -39,7 +39,7 @@ func (l Loader) Load() (map[string]string, error) {
 	}
 
 	files := l.Files
-	if len(files) == 0 {
+	if files == nil {
 		files = DefaultFiles(l.Environment)
 	}
 
