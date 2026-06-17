@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,16 +71,60 @@ func decodeFormValues(values url.Values, dst any) error {
 		return fmt.Errorf("form decode target must point to a struct, map, or url.Values")
 	}
 
-	used := make(map[string]struct{}, len(values))
-	if err := decodeFormStruct(values, target, "", used); err != nil {
+	decoder := newFormDecoder(values)
+	if err := decoder.decodeStruct(target, ""); err != nil {
 		return err
 	}
 	for key := range values {
-		if _, ok := used[key]; !ok {
+		if _, ok := decoder.used[key]; !ok {
 			return fmt.Errorf("unknown form field %q", key)
 		}
 	}
 	return nil
+}
+
+type formDecoder struct {
+	values    url.Values
+	keys      []string
+	used      map[string]struct{}
+	keysReady bool
+}
+
+func newFormDecoder(values url.Values) formDecoder {
+	return formDecoder{
+		values: values,
+		used:   make(map[string]struct{}, len(values)),
+	}
+}
+
+func (d *formDecoder) sortedKeys() []string {
+	if d.keysReady {
+		return d.keys
+	}
+	keys := make([]string, 0, len(d.values))
+	for key := range d.values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	d.keys = keys
+	d.keysReady = true
+	return d.keys
+}
+
+func (d *formDecoder) hasKeyPrefix(prefix string) bool {
+	keys := d.sortedKeys()
+	start := sort.SearchStrings(keys, prefix)
+	return start < len(keys) && strings.HasPrefix(keys[start], prefix)
+}
+
+func (d *formDecoder) keysWithPrefix(prefix string) []string {
+	keys := d.sortedKeys()
+	start := sort.SearchStrings(keys, prefix)
+	end := start
+	for end < len(keys) && strings.HasPrefix(keys[end], prefix) {
+		end++
+	}
+	return keys[start:end]
 }
 
 func decodeFormMap(values url.Values, target reflect.Value) error {
@@ -117,7 +162,7 @@ func decodeFormMap(values url.Values, target reflect.Value) error {
 	}
 }
 
-func decodeFormStruct(values url.Values, target reflect.Value, prefix string, used map[string]struct{}) error {
+func (d *formDecoder) decodeStruct(target reflect.Value, prefix string) error {
 	targetType := target.Type()
 	for i := range target.NumField() {
 		fieldType := targetType.Field(i)
@@ -133,7 +178,7 @@ func decodeFormStruct(values url.Values, target reflect.Value, prefix string, us
 
 		if name == "" {
 			if canDecodeNestedFormStruct(field) {
-				if err := decodeFormStruct(values, dereferenceFormField(field), prefix, used); err != nil {
+				if err := d.decodeStruct(dereferenceFormField(field), prefix); err != nil {
 					return err
 				}
 				continue
@@ -142,33 +187,34 @@ func decodeFormStruct(values url.Values, target reflect.Value, prefix string, us
 		}
 
 		key := joinFormKey(prefix, name)
-		if raw, ok := values[key]; ok {
+		if raw, ok := d.values[key]; ok {
 			if err := setFormField(field, raw, key); err != nil {
 				return err
 			}
-			used[key] = struct{}{}
+			d.used[key] = struct{}{}
 			continue
 		}
 
-		if canDecodeNestedFormStruct(field) && hasFormKeyPrefix(values, key+".") {
+		fieldPrefix := key + "."
+		if canDecodeNestedFormStruct(field) && d.hasKeyPrefix(fieldPrefix) {
 			nested := dereferenceFormField(field)
-			if err := decodeFormStruct(values, nested, key, used); err != nil {
+			if err := d.decodeStruct(nested, key); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if canDecodeNestedFormMap(field) && hasFormKeyPrefix(values, key+".") {
+		if canDecodeNestedFormMap(field) && d.hasKeyPrefix(fieldPrefix) {
 			nested := dereferenceFormField(field)
-			if err := decodeFormMapPrefix(values, nested, key, used); err != nil {
+			if err := d.decodeMapPrefix(nested, key); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if canDecodeIndexedFormField(field) && hasFormKeyPrefix(values, key+".") {
+		if canDecodeIndexedFormField(field) && d.hasKeyPrefix(fieldPrefix) {
 			indexed := dereferenceFormField(field)
-			if err := decodeFormIndexedField(values, indexed, key, used); err != nil {
+			if err := d.decodeIndexedField(indexed, key); err != nil {
 				return err
 			}
 		}
@@ -224,36 +270,29 @@ func unescapeFormKeySegment(segment string) string {
 	return strings.ReplaceAll(segment, `\\`, `\`)
 }
 
-func hasFormKeyPrefix(values url.Values, prefix string) bool {
-	for key := range values {
-		if strings.HasPrefix(key, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
 func canDecodeNestedFormStruct(field reflect.Value) bool {
-	for field.Kind() == reflect.Ptr {
-		if formTypeHasTextUnmarshaler(field.Type()) {
+	fieldType := field.Type()
+	for fieldType.Kind() == reflect.Ptr {
+		if formTypeHasTextUnmarshaler(fieldType) {
 			return false
 		}
-		field = reflect.New(field.Type().Elem()).Elem()
+		fieldType = fieldType.Elem()
 	}
-	return field.Kind() == reflect.Struct &&
-		!formTypeHasTextUnmarshaler(field.Type()) &&
-		!field.Type().ConvertibleTo(formTimeType) &&
-		!field.Type().ConvertibleTo(formURLType)
+	return fieldType.Kind() == reflect.Struct &&
+		!formTypeHasTextUnmarshaler(fieldType) &&
+		!fieldType.ConvertibleTo(formTimeType) &&
+		!fieldType.ConvertibleTo(formURLType)
 }
 
 func canDecodeNestedFormMap(field reflect.Value) bool {
-	for field.Kind() == reflect.Ptr {
-		field = reflect.New(field.Type().Elem()).Elem()
+	fieldType := field.Type()
+	for fieldType.Kind() == reflect.Ptr {
+		fieldType = fieldType.Elem()
 	}
-	return field.Kind() == reflect.Map
+	return fieldType.Kind() == reflect.Map
 }
 
-func decodeFormMapPrefix(values url.Values, target reflect.Value, prefix string, used map[string]struct{}) error {
+func (d *formDecoder) decodeMapPrefix(target reflect.Value, prefix string) error {
 	if target.Type().Key().Kind() != reflect.String {
 		return fmt.Errorf("form map field %q key type must be string", prefix)
 	}
@@ -262,11 +301,9 @@ func decodeFormMapPrefix(values url.Values, target reflect.Value, prefix string,
 	}
 
 	fieldPrefix := prefix + "."
-	for key, raw := range values {
-		mapKeyName, ok := strings.CutPrefix(key, fieldPrefix)
-		if !ok {
-			continue
-		}
+	for _, key := range d.keysWithPrefix(fieldPrefix) {
+		raw := d.values[key]
+		mapKeyName := key[len(fieldPrefix):]
 		if mapKeyName == "" {
 			return fmt.Errorf("form map field %q has empty key", prefix)
 		}
@@ -278,68 +315,77 @@ func decodeFormMapPrefix(values url.Values, target reflect.Value, prefix string,
 
 		mapKey := reflect.ValueOf(unescapeFormKeySegment(mapKeyName)).Convert(target.Type().Key())
 		target.SetMapIndex(mapKey, mapValue)
-		used[key] = struct{}{}
+		d.used[key] = struct{}{}
 	}
 	return nil
 }
 
 func canDecodeIndexedFormField(field reflect.Value) bool {
-	for field.Kind() == reflect.Ptr {
-		field = reflect.New(field.Type().Elem()).Elem()
+	fieldType := field.Type()
+	for fieldType.Kind() == reflect.Ptr {
+		fieldType = fieldType.Elem()
 	}
-	return field.Kind() == reflect.Slice || field.Kind() == reflect.Array
+	return fieldType.Kind() == reflect.Slice || fieldType.Kind() == reflect.Array
 }
 
-func decodeFormIndexedField(values url.Values, target reflect.Value, prefix string, used map[string]struct{}) error {
+func (d *formDecoder) decodeIndexedField(target reflect.Value, prefix string) error {
 	if target.Kind() != reflect.Slice && target.Kind() != reflect.Array {
 		return fmt.Errorf("form field %q must be a slice or array", prefix)
 	}
 
 	fieldPrefix := prefix + "."
-	nestedIndexes := map[int]struct{}{}
-	for key, raw := range values {
-		suffix, ok := strings.CutPrefix(key, fieldPrefix)
-		if !ok {
-			continue
-		}
-
-		indexText, rest := splitFormKey(suffix)
+	keys := d.keysWithPrefix(fieldPrefix)
+	maxIndex := -1
+	for _, key := range keys {
+		suffix := key[len(fieldPrefix):]
+		indexText, _ := splitFormKey(suffix)
 		index, err := strconv.Atoi(indexText)
 		if err != nil || index < 0 {
 			return fmt.Errorf("form field %q has invalid index %q", prefix, indexText)
 		}
-
-		elem, err := indexedFormElement(target, index, prefix)
-		if err != nil {
-			return err
+		if index > maxIndex {
+			maxIndex = index
 		}
+	}
+	if err := prepareIndexedFormTarget(target, maxIndex, prefix); err != nil {
+		return err
+	}
+
+	var nestedIndexes map[int]struct{}
+	for _, key := range keys {
+		raw := d.values[key]
+		suffix := key[len(fieldPrefix):]
+
+		indexText, rest := splitFormKey(suffix)
+		index, _ := strconv.Atoi(indexText)
+		elem := target.Index(index)
 		if rest == "" {
 			if err := setFormField(elem, raw, key); err != nil {
 				return err
 			}
-			used[key] = struct{}{}
+			d.used[key] = struct{}{}
 			continue
+		}
+		if nestedIndexes == nil {
+			nestedIndexes = make(map[int]struct{})
 		}
 		nestedIndexes[index] = struct{}{}
 	}
 
 	for index := range nestedIndexes {
-		elem, err := indexedFormElement(target, index, prefix)
-		if err != nil {
-			return err
-		}
+		elem := target.Index(index)
 		childPrefix := prefix + "." + strconv.Itoa(index)
 		switch {
 		case canDecodeNestedFormStruct(elem):
-			if err := decodeFormStruct(values, dereferenceFormField(elem), childPrefix, used); err != nil {
+			if err := d.decodeStruct(dereferenceFormField(elem), childPrefix); err != nil {
 				return err
 			}
 		case canDecodeNestedFormMap(elem):
-			if err := decodeFormMapPrefix(values, dereferenceFormField(elem), childPrefix, used); err != nil {
+			if err := d.decodeMapPrefix(dereferenceFormField(elem), childPrefix); err != nil {
 				return err
 			}
 		case canDecodeIndexedFormField(elem):
-			if err := decodeFormIndexedField(values, dereferenceFormField(elem), childPrefix, used); err != nil {
+			if err := d.decodeIndexedField(dereferenceFormField(elem), childPrefix); err != nil {
 				return err
 			}
 		default:
@@ -349,22 +395,26 @@ func decodeFormIndexedField(values url.Values, target reflect.Value, prefix stri
 	return nil
 }
 
-func indexedFormElement(target reflect.Value, index int, name string) (reflect.Value, error) {
+func prepareIndexedFormTarget(target reflect.Value, index int, name string) error {
+	if index < 0 {
+		return nil
+	}
 	if target.Kind() == reflect.Array {
 		if index >= target.Len() {
-			return reflect.Value{}, fmt.Errorf("form field %q index %d is above array size %d", name, index, target.Len())
+			return fmt.Errorf("form field %q index %d is above array size %d", name, index, target.Len())
 		}
-		return target.Index(index), nil
+		return nil
 	}
 
 	if index >= maxFormIndexedElements {
-		return reflect.Value{}, fmt.Errorf("form field %q index %d exceeds max index %d", name, index, maxFormIndexedElements-1)
+		return fmt.Errorf("form field %q index %d exceeds max index %d", name, index, maxFormIndexedElements-1)
 	}
 	if index >= target.Len() {
-		extra := reflect.MakeSlice(target.Type(), index-target.Len()+1, index-target.Len()+1)
-		target.Set(reflect.AppendSlice(target, extra))
+		grown := reflect.MakeSlice(target.Type(), index+1, index+1)
+		reflect.Copy(grown, target)
+		target.Set(grown)
 	}
-	return target.Index(index), nil
+	return nil
 }
 
 func dereferenceFormField(field reflect.Value) reflect.Value {
