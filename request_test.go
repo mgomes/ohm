@@ -489,6 +489,36 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRewrittenRequestClone(t *testing.T) {
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerSurvivesNoBodyRewrittenRequestCopy(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		http.StripPrefix("/prefix", app.HTTPHandler()).ServeHTTP(w, r)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/prefix/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	rewrittenKey := pendingResponseStatusRewrittenCopyKeyFor(request)
+	if rewrittenKey.isZero() {
+		t.Fatalf("pendingResponseStatusRewrittenCopyKeyFor(%s %s) is zero, want non-zero", request.Method, request.URL.Path)
+	}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s bodyless stripped request) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByCloneKey.Load(rewrittenKey); ok {
+		t.Fatalf("pending response status rewritten-copy entry leaked after bodyless stripped request returned")
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerClearsAmbiguousRequestCloneStatuses(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

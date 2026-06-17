@@ -53,6 +53,14 @@ type pendingResponseStatusSharedKey struct {
 	requestURI string
 }
 
+type pendingResponseStatusRewrittenCopyKey struct {
+	method     string
+	header     uintptr
+	body       uintptr
+	host       string
+	requestURI string
+}
+
 type pendingResponseStatusCloneRequestKey struct {
 	method        string
 	url           string
@@ -543,6 +551,9 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 
 	var keys []any
 	done := r.Context().Done()
+	if key := pendingResponseStatusRewrittenCopyKeyFor(r); !key.isZero() {
+		keys = append(keys, key)
+	}
 	for _, requestKey := range pendingResponseStatusCloneRequestKeysFor(r) {
 		// Deep clone matching needs a clone-stable discriminator.
 		if requestKey.body == 0 {
@@ -563,6 +574,23 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 		keys = append(keys, pendingResponseStatusBodyCloneKey{request: requestKey})
 	}
 	return keys
+}
+
+func pendingResponseStatusRewrittenCopyKeyFor(r *http.Request) pendingResponseStatusRewrittenCopyKey {
+	if r == nil {
+		return pendingResponseStatusRewrittenCopyKey{}
+	}
+	return pendingResponseStatusRewrittenCopyKey{
+		method:     r.Method,
+		header:     pointerIdentity(r.Header),
+		body:       pointerIdentity(r.Body),
+		host:       r.Host,
+		requestURI: r.RequestURI,
+	}
+}
+
+func (key pendingResponseStatusRewrittenCopyKey) isZero() bool {
+	return key.requestURI == "" || (key.header == 0 && key.body == 0)
 }
 
 func pendingResponseStatusCloneRequestKeysFor(r *http.Request) []pendingResponseStatusCloneRequestKey {
