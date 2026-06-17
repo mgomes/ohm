@@ -32,6 +32,7 @@ var defaultKeys = []string{
 var normalizedDefaultKeys = normalizedKeys(defaultKeys...)
 
 var timeType = reflect.TypeOf(time.Time{})
+var errorType = reflect.TypeOf((*error)(nil)).Elem()
 
 type unwrapOne interface {
 	Unwrap() error
@@ -191,31 +192,10 @@ func (r *Redactor) preservesErrorEncodingAtDepth(value error, depth int) bool {
 		return false
 	}
 
-	reflected := reflect.ValueOf(value)
-	for reflected.Kind() == reflect.Interface || reflected.Kind() == reflect.Pointer {
-		if reflected.IsNil() {
-			return true
-		}
-		reflected = reflected.Elem()
-	}
-
-	preserves := false
-	switch reflected.Kind() {
-	case reflect.Struct:
-		preserves = !hasExportedFields(reflected.Type()) &&
-			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{})) &&
-			!hasPrivateStructuredFields(reflected.Type(), make(map[reflect.Type]struct{}))
-	case reflect.Map, reflect.Slice, reflect.Array:
-		return false
-	default:
-		preserves = true
-	}
-	if !preserves {
-		return false
-	}
-
+	unwrapsMany := false
 	switch value := value.(type) {
 	case unwrapMany:
+		unwrapsMany = true
 		for _, child := range value.Unwrap() {
 			if !r.preservesErrorEncodingAtDepth(child, depth+1) {
 				return false
@@ -225,6 +205,23 @@ func (r *Redactor) preservesErrorEncodingAtDepth(value error, depth int) bool {
 		if !r.preservesErrorEncodingAtDepth(value.Unwrap(), depth+1) {
 			return false
 		}
+	}
+
+	reflected := reflect.ValueOf(value)
+	for reflected.Kind() == reflect.Interface || reflected.Kind() == reflect.Pointer {
+		if reflected.IsNil() {
+			return true
+		}
+		reflected = reflected.Elem()
+	}
+
+	switch reflected.Kind() {
+	case reflect.Struct:
+		return !hasExportedFields(reflected.Type()) &&
+			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{})) &&
+			!hasPrivateStructuredFields(reflected.Type(), make(map[reflect.Type]struct{}), unwrapsMany)
+	case reflect.Map, reflect.Slice, reflect.Array:
+		return false
 	}
 	return true
 }
@@ -238,7 +235,7 @@ func hasExportedFields(t reflect.Type) bool {
 	return false
 }
 
-func hasPrivateStructuredFields(t reflect.Type, seen map[reflect.Type]struct{}) bool {
+func hasPrivateStructuredFields(t reflect.Type, seen map[reflect.Type]struct{}, allowErrorCollections bool) bool {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -255,7 +252,7 @@ func hasPrivateStructuredFields(t reflect.Type, seen map[reflect.Type]struct{}) 
 			if field.IsExported() {
 				continue
 			}
-			if hasStructuredFieldType(field.Type, seen) {
+			if hasStructuredFieldType(field.Type, seen, allowErrorCollections) {
 				return true
 			}
 		}
@@ -263,16 +260,28 @@ func hasPrivateStructuredFields(t reflect.Type, seen map[reflect.Type]struct{}) 
 	return false
 }
 
-func hasStructuredFieldType(t reflect.Type, seen map[reflect.Type]struct{}) bool {
+func hasStructuredFieldType(t reflect.Type, seen map[reflect.Type]struct{}, allowErrorCollections bool) bool {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
 	switch t.Kind() {
 	case reflect.Map, reflect.Slice, reflect.Array:
+		if allowErrorCollections && isErrorCollection(t) {
+			return false
+		}
 		return true
 	case reflect.Struct:
-		return hasPrivateStructuredFields(t, seen)
+		return hasPrivateStructuredFields(t, seen, allowErrorCollections)
+	default:
+		return false
+	}
+}
+
+func isErrorCollection(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
+		return t.Elem().Implements(errorType)
 	default:
 		return false
 	}

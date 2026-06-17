@@ -291,6 +291,31 @@ func TestHandlerPreservesErrorAttributes(t *testing.T) {
 	}
 }
 
+func TestHandlerPreservesJoinedErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("error", errors.Join(
+		errors.New("connection refused"),
+		errors.New("retry exhausted"),
+	)))
+
+	output := buf.String()
+	for _, message := range []string{"connection refused", "retry exhausted"} {
+		if !strings.Contains(output, message) {
+			t.Errorf("logged output %q contains error message %q = false, want true", output, message)
+		}
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["error"] != "connection refused\nretry exhausted" {
+		t.Errorf("logged error = %v, want %v", got["error"], "connection refused\nretry exhausted")
+	}
+}
+
 func TestHandlerRedactsSensitiveErrorAttributes(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
@@ -360,6 +385,25 @@ func TestHandlerRedactsWrappedStructuredErrors(t *testing.T) {
 		Message:  "connection failed",
 		Password: "secret",
 	})
+	logger.Error("request failed", slog.Any("failure", err))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsJoinedStructuredErrors(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	err := errors.Join(
+		errors.New("connection failed"),
+		credentialError{
+			Message:  "credential failed",
+			Password: "secret",
+		},
+	)
 	logger.Error("request failed", slog.Any("failure", err))
 
 	output := buf.String()
