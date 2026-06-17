@@ -349,6 +349,27 @@ func TestHandlerPreservesJoinedErrorAttributes(t *testing.T) {
 	}
 }
 
+func TestHandlerPreservesDuplicateJoinedErrorAttributes(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	err := errors.New("connection refused")
+	logger.Error("request failed", slog.Any("error", errors.Join(err, err)))
+
+	output := buf.String()
+	if !strings.Contains(output, "connection refused") {
+		t.Errorf("logged output %q contains error message %q = false, want true", output, "connection refused")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	if got["error"] != "connection refused\nconnection refused" {
+		t.Errorf("logged error = %v, want %v", got["error"], "connection refused\nconnection refused")
+	}
+}
+
 func TestHandlerPreservesWrappedErrorAttributes(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))

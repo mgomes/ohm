@@ -346,7 +346,13 @@ func (r *Redactor) hasUnsafePrivateFieldValues(
 		if field.IsExported() {
 			continue
 		}
-		if r.hasUnsafePrivateFieldValue(value.Field(i), allowErrorInterfaces, allowErrorCollections, seenPointers, depth+1) {
+		if r.hasUnsafePrivateFieldValue(
+			value.Field(i),
+			allowErrorInterfaces,
+			allowErrorCollections,
+			cloneSeenPointers(seenPointers),
+			depth+1,
+		) {
 			return true
 		}
 	}
@@ -383,7 +389,7 @@ func (r *Redactor) hasUnsafePrivateFieldValue(
 	case reflect.Slice, reflect.Array:
 		if allowErrorCollections && isErrorCollection(value.Type()) {
 			for i := range value.Len() {
-				if r.hasUnsafeErrorFieldValue(value.Index(i), seenPointers, depth+1) {
+				if r.hasUnsafeErrorFieldValue(value.Index(i), cloneSeenPointers(seenPointers), depth+1) {
 					return true
 				}
 			}
@@ -418,7 +424,7 @@ func (r *Redactor) hasUnsafeErrorFieldValue(value reflect.Value, seenPointers ma
 	case reflect.Slice, reflect.Array:
 		if isErrorCollection(value.Type()) {
 			for i := range value.Len() {
-				if r.hasUnsafeErrorFieldValue(value.Index(i), seenPointers, depth+1) {
+				if r.hasUnsafeErrorFieldValue(value.Index(i), cloneSeenPointers(seenPointers), depth+1) {
 					return true
 				}
 			}
@@ -444,6 +450,14 @@ func dereferenceValue(value reflect.Value, seenPointers map[uintptr]struct{}) (r
 		value = value.Elem()
 	}
 	return value, true
+}
+
+func cloneSeenPointers(seenPointers map[uintptr]struct{}) map[uintptr]struct{} {
+	cloned := make(map[uintptr]struct{}, len(seenPointers))
+	for pointer := range seenPointers {
+		cloned[pointer] = struct{}{}
+	}
+	return cloned
 }
 
 func (r *Redactor) hasSensitiveFieldName(t reflect.Type, seen map[reflect.Type]struct{}) bool {
