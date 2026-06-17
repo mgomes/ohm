@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -61,20 +62,27 @@ func TestServerCommandSetsRequestBaseContext(t *testing.T) {
 
 func TestServerCommandCancelsRunnerOnShutdownSignal(t *testing.T) {
 	originalNotifySignalContext := notifySignalContext
-	var signalCancel context.CancelFunc
+	var sendSignal context.CancelFunc
 	var gotSignals []os.Signal
+	var stopOnce sync.Once
+	stopCalled := make(chan struct{})
 	notifySignalContext = func(ctx context.Context, signals ...os.Signal) (context.Context, context.CancelFunc) {
 		gotSignals = append(gotSignals, signals...)
 		signalCtx, cancel := context.WithCancel(ctx)
-		signalCancel = cancel
-		return signalCtx, cancel
+		sendSignal = cancel
+		return signalCtx, func() {
+			stopOnce.Do(func() {
+				close(stopCalled)
+			})
+			cancel()
+		}
 	}
 	t.Cleanup(func() {
 		notifySignalContext = originalNotifySignalContext
 	})
 
 	command := ServerCommand(&testHandler{}, WithServerRunner(func(ctx context.Context, _ *http.Server, _ time.Duration, _ []ShutdownHook) error {
-		if signalCancel == nil {
+		if sendSignal == nil {
 			t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) signal cancel = nil, want configured signal context")
 		}
 		if !containsSignal(gotSignals, os.Interrupt) {
@@ -84,11 +92,16 @@ func TestServerCommandCancelsRunnerOnShutdownSignal(t *testing.T) {
 			t.Errorf("ServerCommand(handler).Run(ctx, io, nil) signals = %v, want syscall.SIGTERM", gotSignals)
 		}
 
-		signalCancel()
+		sendSignal()
 		select {
 		case <-ctx.Done():
 		case <-time.After(time.Second):
 			t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) runner context was not canceled by signal")
+		}
+		select {
+		case <-stopCalled:
+		case <-time.After(time.Second):
+			t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) did not restore signal behavior after cancellation")
 		}
 		return nil
 	}))

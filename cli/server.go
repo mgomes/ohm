@@ -122,6 +122,8 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 
 			ctx, stopSignals := notifySignalContext(ctx, os.Interrupt, syscall.SIGTERM)
 			defer stopSignals()
+			stopSignalReset := context.AfterFunc(ctx, stopSignals)
+			defer stopSignalReset()
 
 			server := &http.Server{
 				Addr:              *addr,
