@@ -475,6 +475,40 @@ func TestSetStatusWithCanceledContextCleansPendingResponseStatus(t *testing.T) {
 	}
 }
 
+func TestSetStatusWithBackgroundContextExpiresPendingResponseStatus(t *testing.T) {
+	previousTTL := pendingResponseStatusTTL
+	pendingResponseStatusTTL = time.Millisecond
+	defer func() {
+		pendingResponseStatusTTL = previousTTL
+	}()
+
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	sharedKey := pendingResponseStatusSharedKeyFor(request)
+	cloneKeys := pendingResponseStatusCloneKeysFor(request)
+
+	SetStatus(request, http.StatusCreated)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, requestPending := pendingResponseStatusByRequest.Load(request)
+		_, sharedPending := pendingResponseStatusBySharedKey.Load(sharedKey)
+		clonePending := false
+		for _, key := range cloneKeys {
+			if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+				clonePending = true
+				break
+			}
+		}
+		if !requestPending && !sharedPending && !clonePending {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pending response status entries were not expired for background context")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossSharedContextRequests(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {

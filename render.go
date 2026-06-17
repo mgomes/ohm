@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type responseStatusKey struct{}
@@ -40,6 +41,7 @@ var (
 	// Preserve pre-handler SetStatus calls across Request.WithContext shallow copies with background contexts.
 	pendingResponseStatusBySharedKey sync.Map
 	pendingResponseStatusByCloneKey  sync.Map
+	pendingResponseStatusTTL         = time.Minute
 )
 
 type pendingResponseStatusSharedKey struct {
@@ -367,11 +369,26 @@ func stopPendingResponseStatusCleanup(pending *pendingResponseStatus) {
 
 func startPendingResponseStatusCleanup(pending *pendingResponseStatus, ctx context.Context) {
 	if ctx.Done() == nil {
+		startPendingResponseStatusTimer(pending)
 		return
 	}
 	stopCleanup := context.AfterFunc(ctx, func() {
 		deletePendingResponseStatus(pending)
 	})
+	publishPendingResponseStatusCleanup(pending, stopCleanup)
+}
+
+func startPendingResponseStatusTimer(pending *pendingResponseStatus) {
+	if pendingResponseStatusTTL <= 0 {
+		return
+	}
+	timer := time.AfterFunc(pendingResponseStatusTTL, func() {
+		deletePendingResponseStatus(pending)
+	})
+	publishPendingResponseStatusCleanup(pending, timer.Stop)
+}
+
+func publishPendingResponseStatusCleanup(pending *pendingResponseStatus, stopCleanup func() bool) {
 	pending.cleanupMu.Lock()
 	if pending.cleanupStopped {
 		pending.cleanupMu.Unlock()
