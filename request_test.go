@@ -211,6 +211,67 @@ func TestRequestRenderRunsNestedRenderersAndUsesStatus(t *testing.T) {
 	}
 }
 
+func TestSetStatusDoesNotReplaceRequestContext(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		raw := req.HTTPRequest()
+		ctx := raw.Context()
+		SetStatus(raw, http.StatusAccepted)
+		if raw.Context() != ctx {
+			t.Errorf("SetStatus replaced request context, want stable context")
+		}
+		return req.Render(&renderPayload{Child: &renderChild{}})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
+func TestSetStatusDoesNotRaceWithRequestContextReaders(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		raw := req.HTTPRequest()
+		done := make(chan struct{})
+		ready := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			close(ready)
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					_ = raw.Context()
+				}
+			}
+		})
+		<-ready
+
+		for range 1000 {
+			SetStatus(raw, http.StatusAccepted)
+		}
+		close(done)
+		wg.Wait()
+
+		return req.Render(&renderPayload{Child: &renderChild{}})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
 func TestCachedImplementingFieldIndexesCachesExportedImplementers(t *testing.T) {
 	type payload struct {
 		Name   string

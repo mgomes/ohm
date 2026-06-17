@@ -12,16 +12,32 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type responseStatusKey struct{}
 
+type responseStatusState struct {
+	code atomic.Int32
+}
+
+func withResponseStatus(r *http.Request) *http.Request {
+	if r == nil {
+		return nil
+	}
+	if _, ok := responseStatusStateFromRequest(r); ok {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, &responseStatusState{}))
+}
+
 // SetStatus records the status code used by Render.
 func SetStatus(r *http.Request, status int) {
-	if r == nil {
+	state, ok := responseStatusStateFromRequest(r)
+	if !ok {
 		return
 	}
-	*r = *r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, status))
+	state.code.Store(int32(status))
 }
 
 // RenderHTML renders content as an HTML response with status.
@@ -160,10 +176,22 @@ func writeXML(w http.ResponseWriter, status int, v any) {
 }
 
 func responseStatus(r *http.Request, fallback int) int {
-	if status, ok := r.Context().Value(responseStatusKey{}).(int); ok {
+	state, ok := responseStatusStateFromRequest(r)
+	if !ok {
+		return fallback
+	}
+	if status := int(state.code.Load()); status != 0 {
 		return status
 	}
 	return fallback
+}
+
+func responseStatusStateFromRequest(r *http.Request) (*responseStatusState, bool) {
+	if r == nil {
+		return nil, false
+	}
+	state, ok := r.Context().Value(responseStatusKey{}).(*responseStatusState)
+	return state, ok
 }
 
 func drainBody(r io.Reader) {
