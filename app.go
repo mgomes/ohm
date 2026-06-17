@@ -197,6 +197,7 @@ func allowedMethods(routes chi.Routes, methods []string, path string) []string {
 }
 
 func (a *App) addRouteMethod(method string) {
+	method = strings.ToUpper(method)
 	index, found := slices.BinarySearch(a.routeMethods, method)
 	if found {
 		return

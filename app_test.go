@@ -379,6 +379,20 @@ func TestAllowedMethodsReturnsMatchingRouteMethods(t *testing.T) {
 	}
 }
 
+func TestAllowedMethodsNormalizesGenericHandleMethod(t *testing.T) {
+	app := New()
+	app.Handle("get", "/posts", func(req *Request) error {
+		return nil
+	})
+
+	got := app.AllowedMethods("/posts")
+	want := []string{http.MethodGet}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("App.AllowedMethods(%q) = %v, want %v", "/posts", got, want)
+	}
+}
+
 func TestAllowedMethodsUsesProvidedMethodSetAndReusesRouteContext(t *testing.T) {
 	routes := &allowedMethodRoutes{
 		matches: map[string]bool{
