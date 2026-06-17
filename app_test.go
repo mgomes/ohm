@@ -234,6 +234,56 @@ func TestRequestHTMLRejectsInvalidResponse(t *testing.T) {
 	}
 }
 
+func BenchmarkRenderHTMLLargeBody(b *testing.B) {
+	const body = "<section><h1>Welcome</h1><p>Rendered content</p></section>"
+	htmlBody := strings.Repeat(body, 2048)
+	html := HTMLFunc(func(_ context.Context, w io.Writer) error {
+		_, err := io.WriteString(w, htmlBody)
+		return err
+	})
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	var writer benchmarkResponseWriter
+
+	b.ReportAllocs()
+	for b.Loop() {
+		writer.reset()
+		if err := RenderHTML(&writer, request, http.StatusOK, html); err != nil {
+			b.Fatalf("RenderHTML(w, r, status, html) error = %v, want nil", err)
+		}
+		if writer.bytes != len(htmlBody) {
+			b.Fatalf("RenderHTML(w, r, status, html) wrote %d bytes, want %d", writer.bytes, len(htmlBody))
+		}
+	}
+}
+
+type benchmarkResponseWriter struct {
+	header http.Header
+	status int
+	bytes  int
+}
+
+func (w *benchmarkResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *benchmarkResponseWriter) Write(body []byte) (int, error) {
+	w.bytes += len(body)
+	return len(body), nil
+}
+
+func (w *benchmarkResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *benchmarkResponseWriter) reset() {
+	clear(w.Header())
+	w.status = 0
+	w.bytes = 0
+}
+
 func TestAppUsesCustomErrorHandler(t *testing.T) {
 	app := New(WithErrorHandler(func(req *Request, err error) {
 		req.PlainText(http.StatusTeapot, err.Error())
