@@ -1,6 +1,7 @@
 package ohm
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -255,6 +256,50 @@ func TestSetStatusFromMiddlewareAppliesToRender(t *testing.T) {
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerAppliesToRender(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		app.HTTPHandler().ServeHTTP(w, r)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesRequestContextCopy(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		ctx := context.WithValue(r.Context(), statusContextKey{}, "copied")
+		app.HTTPHandler().ServeHTTP(w, r.WithContext(ctx))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s with copied context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+}
+
 func TestSetStatusDoesNotRaceWithRequestContextReaders(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
@@ -501,6 +546,17 @@ type renderChild struct {
 
 func (c *renderChild) Render(http.ResponseWriter, *http.Request) error {
 	c.Message = "child"
+	return nil
+}
+
+type statusContextKey struct{}
+
+type statusPayload struct {
+	Message string `json:"message"`
+}
+
+func (p *statusPayload) Render(http.ResponseWriter, *http.Request) error {
+	p.Message = "status"
 	return nil
 }
 

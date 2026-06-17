@@ -18,8 +18,16 @@ import (
 type responseStatusKey struct{}
 
 type responseStatusState struct {
-	code atomic.Int32
+	code               atomic.Int32
+	pendingRequest     *http.Request
+	pendingDone        <-chan struct{}
+	stopPendingCleanup func() bool
 }
+
+var (
+	pendingResponseStatusByRequest sync.Map
+	pendingResponseStatusByDone    sync.Map
+)
 
 func withResponseStatus(r *http.Request) *http.Request {
 	if r == nil {
@@ -28,14 +36,21 @@ func withResponseStatus(r *http.Request) *http.Request {
 	if _, ok := responseStatusStateFromRequest(r); ok {
 		return r
 	}
-	return r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, &responseStatusState{}))
+	state, _ := consumePendingResponseStatusState(r)
+	if state == nil {
+		state = &responseStatusState{}
+	}
+	return r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, state))
 }
 
 // SetStatus records the status code used by Render.
 func SetStatus(r *http.Request, status int) {
 	state, ok := responseStatusStateFromRequest(r)
 	if !ok {
-		return
+		state = pendingOrCreateResponseStatusState(r)
+		if state == nil {
+			return
+		}
 	}
 	state.code.Store(int32(status))
 }
@@ -178,7 +193,10 @@ func writeXML(w http.ResponseWriter, status int, v any) {
 func responseStatus(r *http.Request, fallback int) int {
 	state, ok := responseStatusStateFromRequest(r)
 	if !ok {
-		return fallback
+		state, ok = consumePendingResponseStatusState(r)
+		if !ok {
+			return fallback
+		}
 	}
 	if status := int(state.code.Load()); status != 0 {
 		return status
@@ -192,6 +210,82 @@ func responseStatusStateFromRequest(r *http.Request) (*responseStatusState, bool
 	}
 	state, ok := r.Context().Value(responseStatusKey{}).(*responseStatusState)
 	return state, ok
+}
+
+func pendingOrCreateResponseStatusState(r *http.Request) *responseStatusState {
+	if r == nil {
+		return nil
+	}
+	if state, ok := pendingResponseStatusState(r); ok {
+		return state
+	}
+
+	state := &responseStatusState{
+		pendingRequest: r,
+		pendingDone:    r.Context().Done(),
+	}
+	if state.pendingDone != nil {
+		state.stopPendingCleanup = context.AfterFunc(r.Context(), func() {
+			deletePendingResponseStatusState(state)
+		})
+	}
+
+	actual, loaded := pendingResponseStatusByRequest.LoadOrStore(r, state)
+	if loaded {
+		deletePendingResponseStatusState(state)
+		return actual.(*responseStatusState)
+	}
+	if state.pendingDone == nil {
+		return state
+	}
+
+	actual, loaded = pendingResponseStatusByDone.LoadOrStore(state.pendingDone, state)
+	if !loaded {
+		return state
+	}
+	deletePendingResponseStatusState(state)
+	return actual.(*responseStatusState)
+}
+
+func pendingResponseStatusState(r *http.Request) (*responseStatusState, bool) {
+	if r == nil {
+		return nil, false
+	}
+	if state, ok := pendingResponseStatusByRequest.Load(r); ok {
+		return state.(*responseStatusState), true
+	}
+	done := r.Context().Done()
+	if done == nil {
+		return nil, false
+	}
+	if state, ok := pendingResponseStatusByDone.Load(done); ok {
+		return state.(*responseStatusState), true
+	}
+	return nil, false
+}
+
+func consumePendingResponseStatusState(r *http.Request) (*responseStatusState, bool) {
+	state, ok := pendingResponseStatusState(r)
+	if !ok {
+		return nil, false
+	}
+	deletePendingResponseStatusState(state)
+	return state, true
+}
+
+func deletePendingResponseStatusState(state *responseStatusState) {
+	if state == nil {
+		return
+	}
+	if state.pendingRequest != nil {
+		pendingResponseStatusByRequest.CompareAndDelete(state.pendingRequest, state)
+	}
+	if state.pendingDone != nil {
+		pendingResponseStatusByDone.CompareAndDelete(state.pendingDone, state)
+	}
+	if state.stopPendingCleanup != nil {
+		state.stopPendingCleanup()
+	}
 }
 
 func drainBody(r io.Reader) {
