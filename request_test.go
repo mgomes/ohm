@@ -275,6 +275,48 @@ func TestRequestDecodeInvalidTargetRemainsInternalServerError(t *testing.T) {
 	}
 }
 
+func TestRequestDecodeInvalidFormMapTargetRemainsInternalServerError(t *testing.T) {
+	tests := []struct {
+		name   string
+		decode func(*Request) error
+	}{
+		{
+			name: "non string key",
+			decode: func(req *Request) error {
+				var payload map[int]string
+				return req.Decode(&payload)
+			},
+		},
+		{
+			name: "unsupported value",
+			decode: func(req *Request) error {
+				var payload map[string]int
+				return req.Decode(&payload)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := New()
+			app.Post("/posts", tt.decode)
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("value=ok"))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			app.ServeHTTP(response, request)
+
+			if response.Code != http.StatusInternalServerError {
+				t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusInternalServerError)
+			}
+			if got := response.Body.String(); got != http.StatusText(http.StatusInternalServerError) {
+				t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusInternalServerError))
+			}
+		})
+	}
+}
+
 func TestRequestRenderRunsNestedRenderersAndUsesStatus(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {

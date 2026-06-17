@@ -217,8 +217,11 @@ func validateDecodeTarget(v any) error {
 
 func validateFormDecodeTarget(v any) error {
 	target := reflect.ValueOf(v).Elem()
-	if target.Type() == formURLValuesType || target.Kind() == reflect.Map || target.Kind() == reflect.Struct {
+	if target.Type() == formURLValuesType || target.Kind() == reflect.Struct {
 		return nil
+	}
+	if target.Kind() == reflect.Map {
+		return validateTopLevelFormMapTarget(target.Type())
 	}
 	return fmt.Errorf("form decode target must point to a struct, map, or url.Values")
 }

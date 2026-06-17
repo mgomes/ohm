@@ -128,8 +128,8 @@ func (d *formDecoder) keysWithPrefix(prefix string) []string {
 }
 
 func decodeFormMap(values url.Values, target reflect.Value) error {
-	if target.Type().Key().Kind() != reflect.String {
-		return fmt.Errorf("form map target key type must be string")
+	if err := validateTopLevelFormMapTarget(target.Type()); err != nil {
+		return err
 	}
 	if target.IsNil() {
 		target.Set(reflect.MakeMap(target.Type()))
@@ -160,6 +160,20 @@ func decodeFormMap(values url.Values, target reflect.Value) error {
 	default:
 		return fmt.Errorf("form map target values must be string or []string")
 	}
+}
+
+func validateTopLevelFormMapTarget(targetType reflect.Type) error {
+	if targetType.Key().Kind() != reflect.String {
+		return fmt.Errorf("form map target key type must be string")
+	}
+	valueType := targetType.Elem()
+	if valueType.Kind() == reflect.String {
+		return nil
+	}
+	if valueType.Kind() == reflect.Slice && valueType.Elem().Kind() == reflect.String {
+		return nil
+	}
+	return fmt.Errorf("form map target values must be string or []string")
 }
 
 func (d *formDecoder) decodeStruct(target reflect.Value, prefix string) error {
