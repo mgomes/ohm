@@ -169,6 +169,13 @@ func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) 
 				state.mark(http.StatusOK)
 			}
 		},
+		FlushError: func(next httpsnoop.FlushErrorFunc) httpsnoop.FlushErrorFunc {
+			return func() error {
+				err := next()
+				state.mark(http.StatusOK)
+				return err
+			}
+		},
 		Hijack: func(next httpsnoop.HijackFunc) httpsnoop.HijackFunc {
 			return func() (net.Conn, *bufio.ReadWriter, error) {
 				conn, rw, err := next()

@@ -3,7 +3,7 @@ module github.com/mgomes/ohm
 go 1.25.0
 
 require (
-	github.com/felixge/httpsnoop v1.0.4
+	github.com/felixge/httpsnoop v1.1.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/pressly/goose/v3 v3.26.0
 	go.opentelemetry.io/contrib/exporters/autoexport v0.69.0

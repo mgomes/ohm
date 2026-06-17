@@ -383,6 +383,77 @@ func (r errorReader) Read([]byte) (int, error) {
 	return 0, r.err
 }
 
+func TestAppResponseControllerFlushPreservesFlushError(t *testing.T) {
+	flushErr := errors.New("flush failed")
+	var gotErr error
+	app := New()
+	app.Get("/stream", func(req *Request) error {
+		gotErr = http.NewResponseController(req.ResponseWriter()).Flush()
+		return nil
+	})
+
+	res := &flushErrorRecorder{flushErr: flushErr}
+	request := httptest.NewRequest(http.MethodGet, "/stream", nil)
+
+	app.ServeHTTP(res, request)
+
+	if !errors.Is(gotErr, flushErr) {
+		t.Errorf("ResponseController.Flush() error = %v, want %v", gotErr, flushErr)
+	}
+	if res.flushErrorCalls != 1 {
+		t.Errorf("App.ServeHTTP(%s %s) FlushError calls = %d, want %d", request.Method, request.URL.Path, res.flushErrorCalls, 1)
+	}
+	if res.flushCalls != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) Flush calls = %d, want %d", request.Method, request.URL.Path, res.flushCalls, 0)
+	}
+	if res.status != http.StatusOK {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusOK)
+	}
+}
+
+type flushErrorRecorder struct {
+	header          http.Header
+	status          int
+	flushErr        error
+	flushCalls      int
+	flushErrorCalls int
+}
+
+func (w *flushErrorRecorder) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *flushErrorRecorder) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return len(body), nil
+}
+
+func (w *flushErrorRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *flushErrorRecorder) Flush() {
+	w.flushCalls++
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+}
+
+func (w *flushErrorRecorder) FlushError() error {
+	w.flushErrorCalls++
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.flushErr
+}
+
 func TestAppUsesCustomErrorHandler(t *testing.T) {
 	app := New(WithErrorHandler(func(req *Request, err error) {
 		req.PlainText(http.StatusTeapot, err.Error())
