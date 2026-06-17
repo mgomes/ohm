@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -419,9 +420,13 @@ func parseNewArgs(args []string) (newArgs, error) {
 
 func resolveLatestOhmVersion(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "go", "list", "-m", "-json", "github.com/mgomes/ohm@latest")
-	output, err := cmd.CombinedOutput()
+	output, err := cmd.Output()
 	if err != nil {
-		message := strings.TrimSpace(string(output))
+		var exitErr *exec.ExitError
+		message := ""
+		if errors.As(err, &exitErr) {
+			message = strings.TrimSpace(string(exitErr.Stderr))
+		}
 		if message == "" {
 			return "", fmt.Errorf("resolve latest ohm module version: %w", err)
 		}
