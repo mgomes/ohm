@@ -214,6 +214,8 @@ func TestParseContentTypeUsesMediaTypeBeforeParameters(t *testing.T) {
 		{name: "xml malformed parameter", raw: "application/xml; charset", want: contentTypeXML},
 		{name: "xhtml parameters", raw: "application/xhtml+xml; profile=compact", want: contentTypeHTML},
 		{name: "form parameters", raw: "application/x-www-form-urlencoded; charset=UTF-8", want: contentTypeForm},
+		{name: "unicode folded json", raw: "application/j\u017fon", want: contentTypeUnknown},
+		{name: "unicode folded javascript", raw: "text/java\u017fcript", want: contentTypeUnknown},
 		{name: "unknown", raw: "application/octet-stream; charset=utf-8", want: contentTypeUnknown},
 	}
 	for _, tt := range tests {

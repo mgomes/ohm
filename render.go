@@ -262,19 +262,39 @@ func parseContentType(raw string) contentType {
 	mediaType, _, _ := strings.Cut(raw, ";")
 	mediaType = strings.TrimSpace(mediaType)
 	switch {
-	case strings.EqualFold(mediaType, "text/plain"):
+	case asciiEqualFold(mediaType, "text/plain"):
 		return contentTypePlainText
-	case strings.EqualFold(mediaType, "text/html"), strings.EqualFold(mediaType, "application/xhtml+xml"):
+	case asciiEqualFold(mediaType, "text/html"), asciiEqualFold(mediaType, "application/xhtml+xml"):
 		return contentTypeHTML
-	case strings.EqualFold(mediaType, "application/json"), strings.EqualFold(mediaType, "text/javascript"):
+	case asciiEqualFold(mediaType, "application/json"), asciiEqualFold(mediaType, "text/javascript"):
 		return contentTypeJSON
-	case strings.EqualFold(mediaType, "text/xml"), strings.EqualFold(mediaType, "application/xml"):
+	case asciiEqualFold(mediaType, "text/xml"), asciiEqualFold(mediaType, "application/xml"):
 		return contentTypeXML
-	case strings.EqualFold(mediaType, "application/x-www-form-urlencoded"):
+	case asciiEqualFold(mediaType, "application/x-www-form-urlencoded"):
 		return contentTypeForm
 	default:
 		return contentTypeUnknown
 	}
+}
+
+func asciiEqualFold(s, t string) bool {
+	if len(s) != len(t) {
+		return false
+	}
+	for i := range len(s) {
+		sb := s[i]
+		if 'A' <= sb && sb <= 'Z' {
+			sb += 'a' - 'A'
+		}
+		tb := t[i]
+		if 'A' <= tb && tb <= 'Z' {
+			tb += 'a' - 'A'
+		}
+		if sb != tb {
+			return false
+		}
+	}
+	return true
 }
 
 var (
