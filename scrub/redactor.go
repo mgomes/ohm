@@ -227,7 +227,8 @@ func (r *Redactor) preservesErrorEncodingAtDepth(value error, depth int) bool {
 	case reflect.Struct:
 		return !hasExportedFields(reflected.Type()) &&
 			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{})) &&
-			!hasPrivateStructuredFields(reflected.Type(), make(map[reflect.Type]struct{}), unwrapsOne, unwrapsMany)
+			!hasPrivateStructuredFields(reflected.Type(), make(map[reflect.Type]struct{}), unwrapsOne, unwrapsMany) &&
+			!r.hasUnsafePrivateFieldValues(reflected, unwrapsOne, unwrapsMany, make(map[uintptr]struct{}), 0)
 	case reflect.Map, reflect.Slice, reflect.Array:
 		return false
 	}
@@ -318,6 +319,131 @@ func isErrorCollection(t reflect.Type) bool {
 	default:
 		return false
 	}
+}
+
+func (r *Redactor) hasUnsafePrivateFieldValues(
+	value reflect.Value,
+	allowErrorInterfaces bool,
+	allowErrorCollections bool,
+	seenPointers map[uintptr]struct{},
+	depth int,
+) bool {
+	if depth > maxErrorUnwrapDepth {
+		return true
+	}
+
+	value, ok := dereferenceValue(value, seenPointers)
+	if !ok {
+		return true
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return false
+	}
+
+	t := value.Type()
+	for i := range t.NumField() {
+		field := t.Field(i)
+		if field.IsExported() {
+			continue
+		}
+		if r.hasUnsafePrivateFieldValue(value.Field(i), allowErrorInterfaces, allowErrorCollections, seenPointers, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Redactor) hasUnsafePrivateFieldValue(
+	value reflect.Value,
+	allowErrorInterfaces bool,
+	allowErrorCollections bool,
+	seenPointers map[uintptr]struct{},
+	depth int,
+) bool {
+	if !value.IsValid() {
+		return false
+	}
+	if depth > maxErrorUnwrapDepth {
+		return true
+	}
+
+	switch value.Kind() {
+	case reflect.Interface:
+		if allowErrorInterfaces && value.Type().Implements(errorType) {
+			if value.IsNil() {
+				return false
+			}
+			return r.hasUnsafeErrorFieldValue(value.Elem(), seenPointers, depth+1)
+		}
+	case reflect.Pointer:
+		if value.IsNil() {
+			return false
+		}
+		return r.hasUnsafePrivateFieldValue(value.Elem(), allowErrorInterfaces, allowErrorCollections, seenPointers, depth+1)
+	case reflect.Slice, reflect.Array:
+		if allowErrorCollections && isErrorCollection(value.Type()) {
+			for i := range value.Len() {
+				if r.hasUnsafeErrorFieldValue(value.Index(i), seenPointers, depth+1) {
+					return true
+				}
+			}
+		}
+	case reflect.Struct:
+		return r.hasUnsafePrivateFieldValues(value, allowErrorInterfaces, allowErrorCollections, seenPointers, depth+1)
+	}
+	return false
+}
+
+func (r *Redactor) hasUnsafeErrorFieldValue(value reflect.Value, seenPointers map[uintptr]struct{}, depth int) bool {
+	if depth > maxErrorUnwrapDepth {
+		return true
+	}
+
+	value, ok := dereferenceValue(value, seenPointers)
+	if !ok {
+		return true
+	}
+	if !value.IsValid() {
+		return false
+	}
+
+	switch value.Kind() {
+	case reflect.Struct:
+		return hasExportedFields(value.Type()) ||
+			r.hasSensitiveFieldName(value.Type(), make(map[reflect.Type]struct{})) ||
+			hasPrivateStructuredFields(value.Type(), make(map[reflect.Type]struct{}), true, true) ||
+			r.hasUnsafePrivateFieldValues(value, true, true, seenPointers, depth+1)
+	case reflect.Map:
+		return true
+	case reflect.Slice, reflect.Array:
+		if isErrorCollection(value.Type()) {
+			for i := range value.Len() {
+				if r.hasUnsafeErrorFieldValue(value.Index(i), seenPointers, depth+1) {
+					return true
+				}
+			}
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func dereferenceValue(value reflect.Value, seenPointers map[uintptr]struct{}) (reflect.Value, bool) {
+	for value.IsValid() && (value.Kind() == reflect.Interface || value.Kind() == reflect.Pointer) {
+		if value.IsNil() {
+			return reflect.Value{}, true
+		}
+		if value.Kind() == reflect.Pointer {
+			pointer := value.Pointer()
+			if _, ok := seenPointers[pointer]; ok {
+				return reflect.Value{}, false
+			}
+			seenPointers[pointer] = struct{}{}
+		}
+		value = value.Elem()
+	}
+	return value, true
 }
 
 func (r *Redactor) hasSensitiveFieldName(t reflect.Type, seen map[reflect.Type]struct{}) bool {

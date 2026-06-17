@@ -38,6 +38,11 @@ type typedNilWrapError struct {
 	child error
 }
 
+type hiddenCredentialWrapError struct {
+	safe   error
+	hidden error
+}
+
 type customEncodedError struct {
 	password string
 }
@@ -64,6 +69,14 @@ func (e *typedNilWrapError) Error() string {
 
 func (e *typedNilWrapError) Unwrap() error {
 	return e.child
+}
+
+func (e hiddenCredentialWrapError) Error() string {
+	return e.safe.Error() + ": " + e.hidden.Error()
+}
+
+func (e hiddenCredentialWrapError) Unwrap() error {
+	return e.safe
 }
 
 func (e customEncodedError) Error() string {
@@ -442,6 +455,25 @@ func TestHandlerRedactsWrappedStructuredErrors(t *testing.T) {
 		Message:  "connection failed",
 		Password: "secret",
 	})
+	logger.Error("request failed", slog.Any("failure", err))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsWrappedHiddenStructuredErrors(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	err := hiddenCredentialWrapError{
+		safe: errors.New("connection failed"),
+		hidden: credentialError{
+			Message:  "credential failed",
+			Password: "secret",
+		},
+	}
 	logger.Error("request failed", slog.Any("failure", err))
 
 	output := buf.String()
