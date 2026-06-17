@@ -402,6 +402,53 @@ func TestHandlerPreservesWrappedErrorAttributes(t *testing.T) {
 	}
 }
 
+func TestHandlerPreservesNestedErrorAttributes(t *testing.T) {
+	type payload struct {
+		Err error `json:"err"`
+	}
+
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{
+			name: "map",
+			value: map[string]any{
+				"err": errors.New("connection refused"),
+			},
+		},
+		{
+			name: "struct",
+			value: payload{
+				Err: errors.New("connection refused"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+			logger.Error("request failed", slog.Any("payload", tt.value))
+
+			output := buf.String()
+			if !strings.Contains(output, "connection refused") {
+				t.Errorf("logged output %q contains error message %q = false, want true", output, "connection refused")
+			}
+
+			var got map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+				t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+			}
+			payload := got["payload"].(map[string]any)
+			if payload["err"] != "connection refused" {
+				t.Errorf("logged payload.err = %v, want %v", payload["err"], "connection refused")
+			}
+		})
+	}
+}
+
 func TestHandlerConvertsTypedNilErrorAttributesToNull(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))

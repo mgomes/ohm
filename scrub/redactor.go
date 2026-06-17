@@ -137,6 +137,14 @@ func (r *Redactor) Any(key string, value any) any {
 }
 
 func (r *Redactor) any(key string, value any) (any, bool) {
+	return r.anyValue(key, value, false)
+}
+
+func (r *Redactor) nestedAny(key string, value any) (any, bool) {
+	return r.anyValue(key, value, true)
+}
+
+func (r *Redactor) anyValue(key string, value any, nested bool) (any, bool) {
 	if r.SensitiveKey(key) {
 		return r.replacementValue(), true
 	}
@@ -151,6 +159,9 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 			return nil, true
 		}
 		if r.preservesErrorEncoding(value) {
+			if nested {
+				return value.Error(), true
+			}
 			return value, false
 		}
 	case slog.Attr:
@@ -524,7 +535,7 @@ func (r *Redactor) mapAny(value map[string]any) (any, bool) {
 	out := make(map[string]any, len(value))
 	changed := false
 	for key, childValue := range value {
-		redacted, childChanged := r.any(key, childValue)
+		redacted, childChanged := r.nestedAny(key, childValue)
 		out[key] = redacted
 		changed = changed || childChanged
 	}
@@ -564,7 +575,7 @@ func (r *Redactor) reflectValue(reflected reflect.Value) (any, bool) {
 		iter := reflected.MapRange()
 		for iter.Next() {
 			key := iter.Key().String()
-			redacted, childChanged := r.any(key, valueFromReflect(iter.Value()))
+			redacted, childChanged := r.nestedAny(key, valueFromReflect(iter.Value()))
 			out[key] = redacted
 			changed = changed || childChanged
 		}
@@ -576,7 +587,7 @@ func (r *Redactor) reflectValue(reflected reflect.Value) (any, bool) {
 		out := make([]any, 0, reflected.Len())
 		changed := false
 		for i := range reflected.Len() {
-			redacted, childChanged := r.any("", valueFromReflect(reflected.Index(i)))
+			redacted, childChanged := r.nestedAny("", valueFromReflect(reflected.Index(i)))
 			out = append(out, redacted)
 			changed = changed || childChanged
 		}
@@ -612,7 +623,7 @@ func (r *Redactor) structAny(reflected reflect.Value, forceMap bool) (any, bool)
 			continue
 		}
 
-		redacted, fieldChanged := r.any(key, valueFromReflect(reflected.Field(i)))
+		redacted, fieldChanged := r.nestedAny(key, valueFromReflect(reflected.Field(i)))
 		out[key] = redacted
 		changed = changed || fieldChanged
 	}
