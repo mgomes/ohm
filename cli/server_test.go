@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -55,6 +58,66 @@ func TestServerCommandSetsRequestBaseContext(t *testing.T) {
 	if err := command.Run(ctx, IO{}, nil); err != nil {
 		t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) error = %v, want nil", err)
 	}
+}
+
+func TestServerCommandCancelsRunnerOnShutdownSignal(t *testing.T) {
+	originalNotifySignalContext := notifySignalContext
+	var sendSignal context.CancelFunc
+	var gotSignals []os.Signal
+	var stopOnce sync.Once
+	stopCalled := make(chan struct{})
+	notifySignalContext = func(ctx context.Context, signals ...os.Signal) (context.Context, context.CancelFunc) {
+		gotSignals = append(gotSignals, signals...)
+		signalCtx, cancel := context.WithCancel(ctx)
+		sendSignal = cancel
+		return signalCtx, func() {
+			stopOnce.Do(func() {
+				close(stopCalled)
+			})
+			cancel()
+		}
+	}
+	t.Cleanup(func() {
+		notifySignalContext = originalNotifySignalContext
+	})
+
+	command := ServerCommand(&testHandler{}, WithServerRunner(func(ctx context.Context, _ *http.Server, _ time.Duration, _ []ShutdownHook) error {
+		if sendSignal == nil {
+			t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) signal cancel = nil, want configured signal context")
+		}
+		if !containsSignal(gotSignals, os.Interrupt) {
+			t.Errorf("ServerCommand(handler).Run(ctx, io, nil) signals = %v, want os.Interrupt", gotSignals)
+		}
+		if !containsSignal(gotSignals, syscall.SIGTERM) {
+			t.Errorf("ServerCommand(handler).Run(ctx, io, nil) signals = %v, want syscall.SIGTERM", gotSignals)
+		}
+
+		sendSignal()
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) runner context was not canceled by signal")
+		}
+		select {
+		case <-stopCalled:
+		case <-time.After(time.Second):
+			t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) did not restore signal behavior after cancellation")
+		}
+		return nil
+	}))
+
+	if err := command.Run(context.Background(), IO{}, nil); err != nil {
+		t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) error = %v, want nil", err)
+	}
+}
+
+func containsSignal(signals []os.Signal, want os.Signal) bool {
+	for _, signal := range signals {
+		if signal == want {
+			return true
+		}
+	}
+	return false
 }
 
 type testHandler struct{}

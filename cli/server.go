@@ -8,10 +8,15 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
 const defaultShutdownTimeout = 10 * time.Second
+
+var notifySignalContext = signal.NotifyContext
 
 // ShutdownHook releases resources during graceful shutdown. During a graceful
 // drain, hooks run after the server stops serving, within the remaining
@@ -92,6 +97,9 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 		Summary: "start the HTTP server",
 		Usage:   fmt.Sprintf("server [-addr %s]", cfg.addr),
 		Run: func(ctx context.Context, commandIO IO, args []string) error {
+			if ctx == nil {
+				ctx = context.Background()
+			}
 			commandIO = commandIO.withDefaults()
 			flags := flag.NewFlagSet(cfg.name, flag.ContinueOnError)
 			var flagOutput bytes.Buffer
@@ -111,6 +119,11 @@ func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 			if flags.NArg() > 0 {
 				return fmt.Errorf("%w: server does not accept positional arguments", ErrUsage)
 			}
+
+			ctx, stopSignals := notifySignalContext(ctx, os.Interrupt, syscall.SIGTERM)
+			defer stopSignals()
+			stopSignalReset := context.AfterFunc(ctx, stopSignals)
+			defer stopSignalReset()
 
 			server := &http.Server{
 				Addr:              *addr,
