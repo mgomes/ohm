@@ -72,6 +72,10 @@ type pendingResponseStatusDoneCloneKey struct {
 	request pendingResponseStatusCloneRequestKey
 }
 
+type pendingResponseStatusRequestCloneKey struct {
+	request pendingResponseStatusCloneRequestKey
+}
+
 type pendingResponseStatusGroup struct {
 	mu       sync.Mutex
 	pendings []*pendingResponseStatus
@@ -550,6 +554,7 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 				request: requestKey,
 			})
 		}
+		keys = append(keys, pendingResponseStatusRequestCloneKey{request: requestKey})
 	}
 	return keys
 }

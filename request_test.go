@@ -397,6 +397,60 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestClone(t *testing.T) {
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestCloneWithDerivedContext(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		ctx := context.WithValue(r.Context(), statusContextKey{}, "cloned")
+		app.HTTPHandler().ServeHTTP(w, r.Clone(ctx))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	if request.Context().Done() != nil {
+		t.Fatalf("httptest.NewRequest(%s, %q, nil).Context().Done() is non-nil, want nil", http.MethodGet, "/render")
+	}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s cloned with derived background context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after derived background clone returned")
+		}
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesRequestCloneWithDerivedBackgroundContext(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		app.HTTPHandler().ServeHTTP(w, r.Clone(context.WithoutCancel(r.Context())))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s cloned with derived background context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after derived-background cloned request returned")
+		}
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerSurvivesRewrittenRequestClone(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
