@@ -13,10 +13,11 @@ import (
 
 const defaultShutdownTimeout = 10 * time.Second
 
-// ShutdownHook releases resources during graceful shutdown. Hooks run after the
-// server stops serving, within the remaining shutdown budget, and are the seam
-// for flushing telemetry such as OpenTelemetry providers before the process
-// exits.
+// ShutdownHook releases resources during graceful shutdown. During a graceful
+// drain, hooks run after the server stops serving, within the remaining
+// shutdown budget. If the drain fails and the server is force-closed, hooks run
+// with a fresh bounded context and may overlap abandoned handler goroutines that
+// are still unwinding.
 type ShutdownHook func(context.Context) error
 
 // ServerRunner runs an HTTP server and, once it stops, runs the shutdown hooks
@@ -63,8 +64,9 @@ func WithServerRunner(runner ServerRunner) ServerOption {
 }
 
 // WithShutdownHook registers a hook run during graceful shutdown. Hooks run in
-// reverse registration order, sharing the single shutdown budget with the
-// server drain so total shutdown stays bounded by the shutdown timeout.
+// reverse registration order. During a graceful drain they share the shutdown
+// budget with the server; after a forced close they get a fresh bounded context
+// because the drain context has already expired.
 func WithShutdownHook(hook func(context.Context) error) ServerOption {
 	return func(cfg *serverConfig) {
 		if hook != nil {
@@ -135,8 +137,9 @@ func runShutdownHooks(ctx context.Context, hooks []ShutdownHook) error {
 }
 
 // RunHTTPServer runs server until it stops or ctx is canceled, then runs the
-// shutdown hooks. The drain and the hooks share a single deadline derived from
-// shutdownTimeout, so total shutdown stays bounded by that budget.
+// shutdown hooks. The drain and hooks share a single deadline during graceful
+// shutdown. If the drain fails, the server is force-closed and hooks receive a
+// fresh bounded context so cleanup does not inherit an already-expired deadline.
 func RunHTTPServer(ctx context.Context, server *http.Server, shutdownTimeout time.Duration, hooks []ShutdownHook) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -168,17 +171,21 @@ func RunHTTPServer(ctx context.Context, server *http.Server, shutdownTimeout tim
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 
+		hookCtx := shutdownCtx
+		hookCancel := func() {}
 		serveErr := server.Shutdown(shutdownCtx)
 		if serveErr != nil {
 			if closeErr := server.Close(); closeErr != nil {
 				serveErr = errors.Join(serveErr, closeErr)
 			}
 			serveErr = fmt.Errorf("shutdown server: %w", serveErr)
+			hookCtx, hookCancel = context.WithTimeout(context.Background(), shutdownTimeout)
 		} else if drainErr := <-errCh; drainErr != nil && !errors.Is(drainErr, http.ErrServerClosed) {
 			serveErr = drainErr
 		}
+		defer hookCancel()
 
-		return errors.Join(serveErr, runShutdownHooks(shutdownCtx, hooks))
+		return errors.Join(serveErr, runShutdownHooks(hookCtx, hooks))
 	}
 }
 

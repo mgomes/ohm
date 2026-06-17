@@ -73,6 +73,11 @@ The setup package follows standard OpenTelemetry environment variables such as
 `OTEL_TRACES_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`, and
 `OTEL_EXPORTER_OTLP_PROTOCOL`.
 
+If graceful HTTP shutdown exhausts its drain timeout, Ohm force-closes the
+server and runs shutdown hooks with a fresh bounded context. Those hooks may
+overlap abandoned handlers that are still unwinding, so cleanup code should be
+tolerant of late request logging, tracing, or snapshot attempts.
+
 ## Prefer Observe for helper work
 
 Most helper functions do not need a child span for every successful call. Use

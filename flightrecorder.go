@@ -49,6 +49,10 @@ type FlightRecorder struct {
 	// rather than drop a high-value snapshot.
 	writeMu sync.Mutex
 
+	// recording tracks lifecycle separately from the runtime recorder so late
+	// snapshots from abandoned handlers can be skipped or downgraded after Stop.
+	recording atomic.Bool
+
 	// seq makes snapshot filenames unique so simultaneous triggers sharing a
 	// reason and correlation id cannot overwrite each other's artifact.
 	seq atomic.Uint64
@@ -134,11 +138,16 @@ func NewFlightRecorder(opts ...FlightRecorderOption) *FlightRecorder {
 
 // Start begins recording the execution-trace window.
 func (f *FlightRecorder) Start() error {
-	return f.recorder.Start()
+	if err := f.recorder.Start(); err != nil {
+		return err
+	}
+	f.recording.Store(true)
+	return nil
 }
 
 // Stop stops recording. It can be passed directly to cli.WithShutdownHook.
 func (f *FlightRecorder) Stop(context.Context) error {
+	f.recording.Store(false)
 	f.recorder.Stop()
 	return nil
 }
@@ -146,7 +155,7 @@ func (f *FlightRecorder) Stop(context.Context) error {
 // snapshot writes the current window to the sink, named and stamped with the
 // correlation id for ctx. It is a no-op when recording is not active.
 func (f *FlightRecorder) snapshot(ctx context.Context, reason string) {
-	if f == nil || !f.recorder.Enabled() {
+	if f == nil || !f.recording.Load() || !f.recorder.Enabled() {
 		return
 	}
 
@@ -168,7 +177,11 @@ func (f *FlightRecorder) snapshot(ctx context.Context, reason string) {
 	defer func() { _ = writer.Close() }()
 
 	if _, err := f.recorder.WriteTo(writer); err != nil {
-		f.logger.LogAttrs(ctx, slog.LevelError, "flight snapshot failed",
+		level := slog.LevelError
+		if !f.recording.Load() {
+			level = slog.LevelDebug
+		}
+		f.logger.LogAttrs(ctx, level, "flight snapshot failed",
 			slog.String("reason", reason), slog.Any("error", err))
 		return
 	}
