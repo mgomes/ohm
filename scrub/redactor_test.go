@@ -16,6 +16,15 @@ type customEncodedCredentials struct {
 	Password string `json:"password"`
 }
 
+type credentialError struct {
+	Message  string
+	Password string
+}
+
+func (e credentialError) Error() string {
+	return e.Message + ": " + e.Password
+}
+
 func (c customEncodedCredentials) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Username string `json:"username"`
@@ -268,6 +277,33 @@ func TestHandlerRedactsSensitiveErrorAttributes(t *testing.T) {
 	}
 	if got["password"] != defaultReplacement {
 		t.Errorf("logged password = %v, want %v", got["password"], defaultReplacement)
+	}
+}
+
+func TestHandlerRedactsStructuredErrorFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	logger.Error("request failed", slog.Any("failure", credentialError{
+		Message:  "connection failed",
+		Password: "secret",
+	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", output, err)
+	}
+	failure := got["failure"].(map[string]any)
+	if failure["Message"] != "connection failed" {
+		t.Errorf("logged failure.Message = %v, want %v", failure["Message"], "connection failed")
+	}
+	if failure["Password"] != defaultReplacement {
+		t.Errorf("logged failure.Password = %v, want %v", failure["Password"], defaultReplacement)
 	}
 }
 

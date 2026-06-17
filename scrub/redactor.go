@@ -136,7 +136,9 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 	case Sensitive:
 		return r.replacementValue(), true
 	case error:
-		return value, false
+		if preservesErrorEncoding(value) {
+			return value, false
+		}
 	case slog.Attr:
 		return r.Attr(value), true
 	case []slog.Attr:
@@ -162,6 +164,34 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 	}
 
 	return r.reflectAny(value)
+}
+
+func preservesErrorEncoding(value error) bool {
+	reflected := reflect.ValueOf(value)
+	for reflected.Kind() == reflect.Interface || reflected.Kind() == reflect.Pointer {
+		if reflected.IsNil() {
+			return true
+		}
+		reflected = reflected.Elem()
+	}
+
+	switch reflected.Kind() {
+	case reflect.Struct:
+		return !hasExportedFields(reflected.Type())
+	case reflect.Map, reflect.Slice, reflect.Array:
+		return false
+	default:
+		return true
+	}
+}
+
+func hasExportedFields(t reflect.Type) bool {
+	for i := range t.NumField() {
+		if t.Field(i).IsExported() {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Redactor) addKey(key string) {
