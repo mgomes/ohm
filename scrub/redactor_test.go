@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -322,6 +323,22 @@ func TestHandlerRedactsPrivateSensitiveErrorFields(t *testing.T) {
 	logger.Error("request failed", slog.Any("failure", privateCredentialError{
 		password: "secret",
 	}))
+
+	output := buf.String()
+	if strings.Contains(output, "secret") {
+		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	}
+}
+
+func TestHandlerRedactsWrappedStructuredErrors(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(NewHandler(slog.NewJSONHandler(&buf, nil)))
+
+	err := fmt.Errorf("wrap: %w", credentialError{
+		Message:  "connection failed",
+		Password: "secret",
+	})
+	logger.Error("request failed", slog.Any("failure", err))
 
 	output := buf.String()
 	if strings.Contains(output, "secret") {

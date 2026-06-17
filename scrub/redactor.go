@@ -12,6 +12,8 @@ import (
 
 const defaultReplacement = "[REDACTED]"
 
+const maxErrorUnwrapDepth = 32
+
 var defaultKeys = []string{
 	"password",
 	"passwd",
@@ -30,6 +32,14 @@ var defaultKeys = []string{
 var normalizedDefaultKeys = normalizedKeys(defaultKeys...)
 
 var timeType = reflect.TypeOf(time.Time{})
+
+type unwrapOne interface {
+	Unwrap() error
+}
+
+type unwrapMany interface {
+	Unwrap() []error
+}
 
 // Option configures a Redactor.
 type Option func(*Redactor)
@@ -167,6 +177,17 @@ func (r *Redactor) any(key string, value any) (any, bool) {
 }
 
 func (r *Redactor) preservesErrorEncoding(value error) bool {
+	return r.preservesErrorEncodingAtDepth(value, 0)
+}
+
+func (r *Redactor) preservesErrorEncodingAtDepth(value error, depth int) bool {
+	if value == nil {
+		return true
+	}
+	if depth > maxErrorUnwrapDepth {
+		return false
+	}
+
 	reflected := reflect.ValueOf(value)
 	for reflected.Kind() == reflect.Interface || reflected.Kind() == reflect.Pointer {
 		if reflected.IsNil() {
@@ -175,15 +196,33 @@ func (r *Redactor) preservesErrorEncoding(value error) bool {
 		reflected = reflected.Elem()
 	}
 
+	preserves := false
 	switch reflected.Kind() {
 	case reflect.Struct:
-		return !hasExportedFields(reflected.Type()) &&
+		preserves = !hasExportedFields(reflected.Type()) &&
 			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{}))
 	case reflect.Map, reflect.Slice, reflect.Array:
 		return false
 	default:
-		return true
+		preserves = true
 	}
+	if !preserves {
+		return false
+	}
+
+	switch value := value.(type) {
+	case unwrapMany:
+		for _, child := range value.Unwrap() {
+			if !r.preservesErrorEncodingAtDepth(child, depth+1) {
+				return false
+			}
+		}
+	case unwrapOne:
+		if !r.preservesErrorEncodingAtDepth(value.Unwrap(), depth+1) {
+			return false
+		}
+	}
+	return true
 }
 
 func hasExportedFields(t reflect.Type) bool {
