@@ -12,6 +12,12 @@ type HTTPError struct {
 	Err     error
 }
 
+// DecodeError is an error decoding malformed client request input.
+type DecodeError struct {
+	Status int
+	Err    error
+}
+
 // Error returns the error message.
 func (e *HTTPError) Error() string {
 	if e.Message != "" {
@@ -25,6 +31,19 @@ func (e *HTTPError) Error() string {
 
 // Unwrap returns the underlying error.
 func (e *HTTPError) Unwrap() error {
+	return e.Err
+}
+
+// Error returns the decode error message.
+func (e *DecodeError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return http.StatusText(e.responseStatus())
+}
+
+// Unwrap returns the underlying decode error.
+func (e *DecodeError) Unwrap() error {
 	return e.Err
 }
 
@@ -55,6 +74,13 @@ func ErrorResponse(err error) (int, string) {
 		if httpErr.Message != "" {
 			message = httpErr.Message
 		}
+		return status, message
+	}
+
+	var decodeErr *DecodeError
+	if errors.As(err, &decodeErr) {
+		status = decodeErr.responseStatus()
+		message = http.StatusText(status)
 	}
 
 	return status, message
@@ -65,4 +91,11 @@ func (e *HTTPError) responseStatus() int {
 		return e.Status
 	}
 	return http.StatusInternalServerError
+}
+
+func (e *DecodeError) responseStatus() int {
+	if e.Status >= 400 && e.Status <= 499 {
+		return e.Status
+	}
+	return http.StatusBadRequest
 }
