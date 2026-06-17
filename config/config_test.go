@@ -252,6 +252,32 @@ func TestLoadUsesOHMEnvForDefaultFileOrder(t *testing.T) {
 	}
 }
 
+func TestLoadWithEmptyFilesSkipsEnvFiles(t *testing.T) {
+	type cfg struct {
+		Name string `env:"APP_NAME,required"`
+	}
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".env"), "APP_NAME=file\n")
+
+	_, err := Load[cfg](
+		WithDir(dir),
+		WithFiles(),
+		WithLookup(FromMap(map[string]string{})),
+	)
+	var cfgErr *Error
+	if !errors.As(err, &cfgErr) {
+		t.Fatalf("Load[cfg](WithFiles()) error = %v, want *Error", err)
+	}
+
+	want := map[Problem]bool{
+		{Field: "Name", Key: "APP_NAME", Message: "required value is missing"}: true,
+	}
+	if got := problemSet(cfgErr.Problems()); !maps.Equal(got, want) {
+		t.Errorf("Load[cfg](WithFiles()) problems = %v, want %v", got, want)
+	}
+}
+
 func TestSecretMarshalJSONRedactsNestedValues(t *testing.T) {
 	input := struct {
 		DatabaseURL Secret

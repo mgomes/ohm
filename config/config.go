@@ -51,7 +51,7 @@ func WithEnvironment(environment string) Option {
 // WithFiles configures the exact environment files Load should read.
 func WithFiles(files ...string) Option {
 	return func(opts *options) {
-		opts.files = append([]string(nil), files...)
+		opts.files = append(make([]string, 0, len(files)), files...)
 		opts.filesSet = true
 	}
 }

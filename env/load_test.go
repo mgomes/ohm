@@ -39,6 +39,20 @@ func TestLoaderLoadMergesFilesInOrder(t *testing.T) {
 	}
 }
 
+func TestLoaderLoadEmptyFilesSkipsDefaults(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".env"), "DATABASE_URL=file\n")
+
+	got, err := Loader{Dir: dir, Files: []string{}}.Load()
+	if err != nil {
+		t.Fatalf("Loader.Load() error = %v, want nil", err)
+	}
+
+	if len(got) != 0 {
+		t.Errorf("Loader.Load() = %v, want empty map", got)
+	}
+}
+
 func TestLoaderApplyDoesNotOverwriteExistingValues(t *testing.T) {
 	existing := map[string]string{"EXISTING": "process"}
 	set := map[string]string{}
