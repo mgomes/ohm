@@ -369,6 +369,57 @@ func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestContextCopy(t *testi
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerSurvivesRequestClone(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		app.HTTPHandler().ServeHTTP(w, r.Clone(r.Context()))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s cloned request) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
+		t.Fatalf("pending response status request entry leaked after cloned request returned")
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after cloned request returned")
+		}
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerClearsAmbiguousRequestCloneStatuses(t *testing.T) {
+	first := httptest.NewRequest(http.MethodGet, "/render", nil)
+	second := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	SetStatus(first, http.StatusCreated)
+	SetStatus(second, http.StatusAccepted)
+
+	if status, ok := takePendingResponseStatus(first.Clone(first.Context())); ok {
+		t.Fatalf("takePendingResponseStatus(cloned ambiguous request) = (%d, true), want no status", status)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(first); ok {
+		t.Fatalf("pending response status request entry leaked for first ambiguous request")
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(second); ok {
+		t.Fatalf("pending response status request entry leaked for second ambiguous request")
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(first) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked for ambiguous requests")
+		}
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableContextRequests(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
@@ -407,6 +458,45 @@ func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableContextRequests(t *
 	}
 	if _, ok := pendingResponseStatusBySharedKey.Load(pendingResponseStatusSharedKeyFor(second)); ok {
 		t.Fatalf("pending response status shared entry leaked for second request")
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableClonedRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render?request=first", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render?request=second", nil).WithContext(ctx)
+
+	SetStatus(first, http.StatusCreated)
+	SetStatus(second, http.StatusAccepted)
+
+	firstResponse := httptest.NewRecorder()
+	firstCtx := context.WithValue(first.Context(), statusContextKey{}, "first")
+	app.HTTPHandler().ServeHTTP(firstResponse, first.Clone(firstCtx))
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s cloned with shared context) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+
+	secondResponse := httptest.NewRecorder()
+	secondCtx := context.WithValue(second.Context(), statusContextKey{}, "second")
+	app.HTTPHandler().ServeHTTP(secondResponse, second.Clone(secondCtx))
+	if secondResponse.Code != http.StatusAccepted {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s cloned with shared context) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusAccepted)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(first) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked for first request")
+		}
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(second) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked for second request")
+		}
 	}
 }
 

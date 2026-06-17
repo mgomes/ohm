@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ type pendingResponseStatus struct {
 	code      atomic.Int32
 	request   *http.Request
 	sharedKey pendingResponseStatusSharedKey
+	cloneKeys []any
 
 	stopCleanup func() bool
 }
@@ -33,6 +35,7 @@ var (
 	pendingResponseStatusByRequest sync.Map
 	// Preserve pre-handler SetStatus calls across Request.WithContext shallow copies with background contexts.
 	pendingResponseStatusBySharedKey sync.Map
+	pendingResponseStatusByCloneKey  sync.Map
 )
 
 type pendingResponseStatusSharedKey struct {
@@ -42,6 +45,30 @@ type pendingResponseStatusSharedKey struct {
 	body       uintptr
 	host       string
 	requestURI string
+}
+
+type pendingResponseStatusCloneRequestKey struct {
+	method        string
+	url           string
+	host          string
+	requestURI    string
+	body          uintptr
+	contentLength int64
+}
+
+type pendingResponseStatusContextCloneKey struct {
+	context any
+	request pendingResponseStatusCloneRequestKey
+}
+
+type pendingResponseStatusDoneCloneKey struct {
+	done    <-chan struct{}
+	request pendingResponseStatusCloneRequestKey
+}
+
+type pendingResponseStatusGroup struct {
+	mu       sync.Mutex
+	pendings []*pendingResponseStatus
 }
 
 func withResponseStatus(r *http.Request) *http.Request {
@@ -244,7 +271,7 @@ func rememberPendingResponseStatus(r *http.Request, status int32) {
 	if r == nil {
 		return
 	}
-	if pending, ok := lookupPendingResponseStatus(r); ok {
+	if pending, ok := lookupPendingResponseStatusForWrite(r); ok {
 		pending.code.Store(status)
 		return
 	}
@@ -252,12 +279,8 @@ func rememberPendingResponseStatus(r *http.Request, status int32) {
 	pending := &pendingResponseStatus{}
 	pending.request = r
 	pending.sharedKey = pendingResponseStatusSharedKeyFor(r)
+	pending.cloneKeys = pendingResponseStatusCloneKeysFor(r)
 	pending.code.Store(status)
-	if r.Context().Done() != nil {
-		pending.stopCleanup = context.AfterFunc(r.Context(), func() {
-			deletePendingResponseStatus(pending)
-		})
-	}
 
 	actual, loaded := pendingResponseStatusByRequest.LoadOrStore(r, pending)
 	if loaded {
@@ -265,19 +288,32 @@ func rememberPendingResponseStatus(r *http.Request, status int32) {
 		actual.(*pendingResponseStatus).code.Store(status)
 		return
 	}
-	storePendingResponseStatusBySharedKey(pending, status)
+	if !storePendingResponseStatusBySharedKey(pending, status) {
+		return
+	}
+	storePendingResponseStatusByCloneKeys(pending)
+	startPendingResponseStatusCleanup(pending, r.Context())
 }
 
 func takePendingResponseStatus(r *http.Request) (int32, bool) {
-	pending, ok := lookupPendingResponseStatus(r)
-	if !ok {
-		return 0, false
+	if pending, ok := lookupPendingResponseStatusForWrite(r); ok {
+		deletePendingResponseStatus(pending)
+		return pending.code.Load(), true
 	}
-	deletePendingResponseStatus(pending)
-	return pending.code.Load(), true
+
+	pending, ambiguous := lookupPendingResponseStatusByCloneKeys(r)
+	if pending != nil {
+		deletePendingResponseStatus(pending)
+		return pending.code.Load(), true
+	}
+	// Identical cloned requests cannot be attributed to their originals without mutating the request.
+	for _, pending := range ambiguous {
+		deletePendingResponseStatus(pending)
+	}
+	return 0, false
 }
 
-func lookupPendingResponseStatus(r *http.Request) (*pendingResponseStatus, bool) {
+func lookupPendingResponseStatusForWrite(r *http.Request) (*pendingResponseStatus, bool) {
 	if r == nil {
 		return nil, false
 	}
@@ -307,6 +343,15 @@ func stopPendingResponseStatusCleanup(pending *pendingResponseStatus) {
 	}
 }
 
+func startPendingResponseStatusCleanup(pending *pendingResponseStatus, ctx context.Context) {
+	if ctx.Done() == nil {
+		return
+	}
+	pending.stopCleanup = context.AfterFunc(ctx, func() {
+		deletePendingResponseStatus(pending)
+	})
+}
+
 func deletePendingResponseStatus(pending *pendingResponseStatus) {
 	if pending == nil {
 		return
@@ -317,18 +362,108 @@ func deletePendingResponseStatus(pending *pendingResponseStatus) {
 	if !pending.sharedKey.isZero() {
 		pendingResponseStatusBySharedKey.CompareAndDelete(pending.sharedKey, pending)
 	}
+	deletePendingResponseStatusFromCloneGroups(pending)
 	stopPendingResponseStatusCleanup(pending)
 }
 
-func storePendingResponseStatusBySharedKey(pending *pendingResponseStatus, status int32) {
+func storePendingResponseStatusBySharedKey(pending *pendingResponseStatus, status int32) bool {
 	if pending.sharedKey.isZero() {
-		return
+		return true
 	}
 	actual, loaded := pendingResponseStatusBySharedKey.LoadOrStore(pending.sharedKey, pending)
 	if loaded {
 		deletePendingResponseStatus(pending)
 		actual.(*pendingResponseStatus).code.Store(status)
+		return false
 	}
+	return true
+}
+
+func storePendingResponseStatusByCloneKeys(pending *pendingResponseStatus) {
+	for _, key := range pending.cloneKeys {
+		storePendingResponseStatusByCloneKey(key, pending)
+	}
+}
+
+func storePendingResponseStatusByCloneKey(key any, pending *pendingResponseStatus) {
+	for {
+		value, _ := pendingResponseStatusByCloneKey.LoadOrStore(key, &pendingResponseStatusGroup{})
+		group := value.(*pendingResponseStatusGroup)
+		group.mu.Lock()
+		current, ok := pendingResponseStatusByCloneKey.Load(key)
+		if ok && current == group {
+			group.pendings = append(group.pendings, pending)
+			group.mu.Unlock()
+			return
+		}
+		group.mu.Unlock()
+	}
+}
+
+func lookupPendingResponseStatusByCloneKeys(r *http.Request) (*pendingResponseStatus, []*pendingResponseStatus) {
+	var ambiguous []*pendingResponseStatus
+	for _, key := range pendingResponseStatusCloneKeysFor(r) {
+		pending, matches := lookupPendingResponseStatusByCloneKey(key)
+		if pending != nil {
+			return pending, nil
+		}
+		ambiguous = append(ambiguous, matches...)
+	}
+	return nil, ambiguous
+}
+
+func lookupPendingResponseStatusByCloneKey(key any) (*pendingResponseStatus, []*pendingResponseStatus) {
+	for {
+		value, ok := pendingResponseStatusByCloneKey.Load(key)
+		if !ok {
+			return nil, nil
+		}
+		group := value.(*pendingResponseStatusGroup)
+		group.mu.Lock()
+		current, ok := pendingResponseStatusByCloneKey.Load(key)
+		if !ok || current != group {
+			group.mu.Unlock()
+			continue
+		}
+		switch len(group.pendings) {
+		case 0:
+			group.mu.Unlock()
+			return nil, nil
+		case 1:
+			pending := group.pendings[0]
+			group.mu.Unlock()
+			return pending, nil
+		default:
+			matches := slices.Clone(group.pendings)
+			group.mu.Unlock()
+			return nil, matches
+		}
+	}
+}
+
+func deletePendingResponseStatusFromCloneGroups(pending *pendingResponseStatus) {
+	for _, key := range pending.cloneKeys {
+		deletePendingResponseStatusFromCloneGroup(key, pending)
+	}
+}
+
+func deletePendingResponseStatusFromCloneGroup(key any, pending *pendingResponseStatus) {
+	value, ok := pendingResponseStatusByCloneKey.Load(key)
+	if !ok {
+		return
+	}
+	group := value.(*pendingResponseStatusGroup)
+	group.mu.Lock()
+	for i, candidate := range group.pendings {
+		if candidate == pending {
+			group.pendings = slices.Delete(group.pendings, i, i+1)
+			break
+		}
+	}
+	if len(group.pendings) == 0 {
+		pendingResponseStatusByCloneKey.CompareAndDelete(key, group)
+	}
+	group.mu.Unlock()
 }
 
 func pendingResponseStatusSharedKeyFor(r *http.Request) pendingResponseStatusSharedKey {
@@ -347,6 +482,64 @@ func pendingResponseStatusSharedKeyFor(r *http.Request) pendingResponseStatusSha
 
 func (key pendingResponseStatusSharedKey) isZero() bool {
 	return key.url == 0 && key.header == 0 && key.body == 0
+}
+
+func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
+	if r == nil {
+		return nil
+	}
+	requestKey := pendingResponseStatusCloneRequestKeyFor(r)
+	if requestKey.isZero() {
+		return nil
+	}
+
+	var keys []any
+	if contextKey, ok := comparableContextKey(r.Context()); ok {
+		keys = append(keys, pendingResponseStatusContextCloneKey{
+			context: contextKey,
+			request: requestKey,
+		})
+	}
+	if done := r.Context().Done(); done != nil {
+		keys = append(keys, pendingResponseStatusDoneCloneKey{
+			done:    done,
+			request: requestKey,
+		})
+	}
+	return keys
+}
+
+func pendingResponseStatusCloneRequestKeyFor(r *http.Request) pendingResponseStatusCloneRequestKey {
+	if r == nil {
+		return pendingResponseStatusCloneRequestKey{}
+	}
+	url := ""
+	if r.URL != nil {
+		url = r.URL.String()
+	}
+	return pendingResponseStatusCloneRequestKey{
+		method:        r.Method,
+		url:           url,
+		host:          r.Host,
+		requestURI:    r.RequestURI,
+		body:          pointerIdentity(r.Body),
+		contentLength: r.ContentLength,
+	}
+}
+
+func (key pendingResponseStatusCloneRequestKey) isZero() bool {
+	return key.url == "" && key.body == 0
+}
+
+func comparableContextKey(ctx context.Context) (any, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	value := reflect.ValueOf(ctx)
+	if !value.IsValid() || !value.Comparable() {
+		return nil, false
+	}
+	return ctx, true
 }
 
 func pointerIdentity(v any) uintptr {
