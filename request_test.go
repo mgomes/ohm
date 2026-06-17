@@ -442,7 +442,9 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestCloneWithDerivedBackgroundCont
 
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/render", nil)
-	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
 
 	handler.ServeHTTP(response, request)
 

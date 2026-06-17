@@ -76,6 +76,11 @@ type pendingResponseStatusBodyCloneKey struct {
 	request pendingResponseStatusCloneRequestKey
 }
 
+type pendingResponseStatusDetachedContextCloneKey struct {
+	context any
+	request pendingResponseStatusCloneRequestKey
+}
+
 type pendingResponseStatusGroup struct {
 	mu       sync.Mutex
 	pendings []*pendingResponseStatus
@@ -300,7 +305,7 @@ func rememberPendingResponseStatus(r *http.Request, status int32) {
 	pending := &pendingResponseStatus{}
 	pending.request = r
 	pending.sharedKey = pendingResponseStatusSharedKeyFor(r)
-	pending.cloneKeys = pendingResponseStatusCloneKeysFor(r)
+	pending.cloneKeys = pendingResponseStatusStoreCloneKeysFor(r)
 	pending.code.Store(status)
 
 	actual, loaded := pendingResponseStatusByRequest.LoadOrStore(r, pending)
@@ -454,7 +459,7 @@ func storePendingResponseStatusByCloneKey(key any, pending *pendingResponseStatu
 
 func lookupPendingResponseStatusByCloneKeys(r *http.Request) (*pendingResponseStatus, []*pendingResponseStatus) {
 	var ambiguous []*pendingResponseStatus
-	for _, key := range pendingResponseStatusCloneKeysFor(r) {
+	for _, key := range pendingResponseStatusLookupCloneKeysFor(r) {
 		pending, matches := lookupPendingResponseStatusByCloneKey(key)
 		if pending != nil {
 			return pending, nil
@@ -536,7 +541,7 @@ func (key pendingResponseStatusSharedKey) isZero() bool {
 	return key.url == 0 && key.header == 0 && key.body == 0
 }
 
-func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
+func pendingResponseStatusStoreCloneKeysFor(r *http.Request) []any {
 	if r == nil {
 		return nil
 	}
@@ -544,22 +549,60 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 	var keys []any
 	done := r.Context().Done()
 	for _, requestKey := range pendingResponseStatusCloneRequestKeysFor(r) {
-		if contextKey, ok := comparableContextKey(r.Context()); ok && (done != nil || requestKey.body != 0) {
-			keys = append(keys, pendingResponseStatusContextCloneKey{
+		keys = appendPendingResponseStatusExactCloneKeys(keys, r.Context(), done, requestKey)
+		if done == nil {
+			continue
+		}
+		if contextKey, ok := comparableContextKey(context.WithoutCancel(r.Context())); ok {
+			keys = append(keys, pendingResponseStatusDetachedContextCloneKey{
 				context: contextKey,
 				request: requestKey,
 			})
 		}
-		if done != nil {
-			keys = append(keys, pendingResponseStatusDoneCloneKey{
-				done:    done,
-				request: requestKey,
-			})
+	}
+	return keys
+}
+
+func pendingResponseStatusLookupCloneKeysFor(r *http.Request) []any {
+	if r == nil {
+		return nil
+	}
+
+	var keys []any
+	done := r.Context().Done()
+	for _, requestKey := range pendingResponseStatusCloneRequestKeysFor(r) {
+		keys = appendPendingResponseStatusExactCloneKeys(keys, r.Context(), done, requestKey)
+		if done == nil {
+			if contextKey, ok := comparableContextKey(r.Context()); ok {
+				keys = append(keys, pendingResponseStatusDetachedContextCloneKey{
+					context: contextKey,
+					request: requestKey,
+				})
+			}
 		}
-		// Detached background clones need a clone-stable discriminator; shape alone can match unrelated requests.
-		if requestKey.body != 0 {
-			keys = append(keys, pendingResponseStatusBodyCloneKey{request: requestKey})
-		}
+	}
+	return keys
+}
+
+func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
+	return pendingResponseStatusStoreCloneKeysFor(r)
+}
+
+func appendPendingResponseStatusExactCloneKeys(keys []any, ctx context.Context, done <-chan struct{}, requestKey pendingResponseStatusCloneRequestKey) []any {
+	if contextKey, ok := comparableContextKey(ctx); ok && (done != nil || requestKey.body != 0) {
+		keys = append(keys, pendingResponseStatusContextCloneKey{
+			context: contextKey,
+			request: requestKey,
+		})
+	}
+	if done != nil {
+		keys = append(keys, pendingResponseStatusDoneCloneKey{
+			done:    done,
+			request: requestKey,
+		})
+	}
+	if requestKey.body != 0 {
+		keys = append(keys, pendingResponseStatusBodyCloneKey{request: requestKey})
 	}
 	return keys
 }
