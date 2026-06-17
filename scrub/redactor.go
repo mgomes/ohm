@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -13,6 +14,8 @@ import (
 const defaultReplacement = "[REDACTED]"
 
 const maxErrorUnwrapDepth = 32
+const maxSensitiveKeyCacheEntries = 256
+const maxSensitiveKeyCacheKeyBytes = 128
 
 var defaultKeys = []string{
 	"password",
@@ -47,8 +50,10 @@ type Option func(*Redactor)
 
 // Redactor redacts sensitive values from structured data.
 type Redactor struct {
-	keys        map[string]struct{}
-	replacement string
+	keys              map[string]struct{}
+	replacement       string
+	cacheMu           sync.RWMutex
+	sensitiveKeyCache map[string]bool
 }
 
 // Sensitive marks a value that must always be redacted.
@@ -96,6 +101,20 @@ func Mark(value any) Sensitive {
 
 // SensitiveKey reports whether key should be redacted.
 func (r *Redactor) SensitiveKey(key string) bool {
+	if r != nil {
+		if sensitive, ok := r.cachedSensitiveKey(key); ok {
+			return sensitive
+		}
+	}
+
+	sensitive := r.sensitiveKeyUncached(key)
+	if r != nil {
+		r.cacheSensitiveKey(key, sensitive)
+	}
+	return sensitive
+}
+
+func (r *Redactor) sensitiveKeyUncached(key string) bool {
 	normalized := normalizeKey(key)
 	if normalized == "" {
 		return false
@@ -106,6 +125,37 @@ func (r *Redactor) SensitiveKey(key string) bool {
 		}
 	}
 	return false
+}
+
+func (r *Redactor) cachedSensitiveKey(key string) (bool, bool) {
+	if len(key) > maxSensitiveKeyCacheKeyBytes {
+		return false, false
+	}
+	r.cacheMu.RLock()
+	defer r.cacheMu.RUnlock()
+	if r.sensitiveKeyCache == nil {
+		return false, false
+	}
+	sensitive, ok := r.sensitiveKeyCache[key]
+	return sensitive, ok
+}
+
+func (r *Redactor) cacheSensitiveKey(key string, sensitive bool) {
+	if len(key) > maxSensitiveKeyCacheKeyBytes {
+		return
+	}
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	if r.sensitiveKeyCache == nil {
+		r.sensitiveKeyCache = make(map[string]bool, len(defaultKeys))
+	}
+	if _, ok := r.sensitiveKeyCache[key]; ok {
+		return
+	}
+	if len(r.sensitiveKeyCache) >= maxSensitiveKeyCacheEntries {
+		return
+	}
+	r.sensitiveKeyCache[key] = sensitive
 }
 
 // Attr returns a scrubbed slog attribute.
