@@ -200,7 +200,8 @@ func (r *Redactor) preservesErrorEncodingAtDepth(value error, depth int) bool {
 	switch reflected.Kind() {
 	case reflect.Struct:
 		preserves = !hasExportedFields(reflected.Type()) &&
-			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{}))
+			!r.hasSensitiveFieldName(reflected.Type(), make(map[reflect.Type]struct{})) &&
+			!hasPrivateStructuredFields(reflected.Type(), make(map[reflect.Type]struct{}))
 	case reflect.Map, reflect.Slice, reflect.Array:
 		return false
 	default:
@@ -232,6 +233,46 @@ func hasExportedFields(t reflect.Type) bool {
 		}
 	}
 	return false
+}
+
+func hasPrivateStructuredFields(t reflect.Type, seen map[reflect.Type]struct{}) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if _, ok := seen[t]; ok {
+		return false
+	}
+	seen[t] = struct{}{}
+
+	switch t.Kind() {
+	case reflect.Struct:
+		for i := range t.NumField() {
+			field := t.Field(i)
+			if field.IsExported() {
+				continue
+			}
+			if hasStructuredFieldType(field.Type, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasStructuredFieldType(t reflect.Type, seen map[reflect.Type]struct{}) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	switch t.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array:
+		return true
+	case reflect.Struct:
+		return hasPrivateStructuredFields(t, seen)
+	default:
+		return false
+	}
 }
 
 func (r *Redactor) hasSensitiveFieldName(t reflect.Type, seen map[reflect.Type]struct{}) bool {
