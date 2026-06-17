@@ -18,27 +18,35 @@ import (
 type responseStatusKey struct{}
 
 type responseStatusState struct {
-	code               atomic.Int32
-	pendingRequest     *http.Request
-	pendingDone        <-chan struct{}
-	stopPendingCleanup func() bool
+	code atomic.Int32
+}
+
+type pendingResponseStatus struct {
+	code        atomic.Int32
+	request     *http.Request
+	done        <-chan struct{}
+	stopCleanup func() bool
 }
 
 var (
 	pendingResponseStatusByRequest sync.Map
-	pendingResponseStatusByDone    sync.Map
+	// Preserve pre-handler SetStatus calls across request copies that keep the same cancellation channel.
+	pendingResponseStatusByDone sync.Map
 )
 
 func withResponseStatus(r *http.Request) *http.Request {
 	if r == nil {
 		return nil
 	}
-	if _, ok := responseStatusStateFromRequest(r); ok {
+	if state, ok := responseStatusStateFromRequest(r); ok {
+		if status, ok := takePendingResponseStatus(r); ok {
+			state.code.Store(status)
+		}
 		return r
 	}
-	state, _ := consumePendingResponseStatusState(r)
-	if state == nil {
-		state = &responseStatusState{}
+	state := &responseStatusState{}
+	if status, ok := takePendingResponseStatus(r); ok {
+		state.code.Store(status)
 	}
 	return r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, state))
 }
@@ -47,10 +55,8 @@ func withResponseStatus(r *http.Request) *http.Request {
 func SetStatus(r *http.Request, status int) {
 	state, ok := responseStatusStateFromRequest(r)
 	if !ok {
-		state = pendingOrCreateResponseStatusState(r)
-		if state == nil {
-			return
-		}
+		rememberPendingResponseStatus(r, int32(status))
+		return
 	}
 	state.code.Store(int32(status))
 }
@@ -193,10 +199,8 @@ func writeXML(w http.ResponseWriter, status int, v any) {
 func responseStatus(r *http.Request, fallback int) int {
 	state, ok := responseStatusStateFromRequest(r)
 	if !ok {
-		state, ok = consumePendingResponseStatusState(r)
-		if !ok {
-			return fallback
-		}
+		status, ok := takePendingResponseStatus(r)
+		return responseStatusOrFallback(status, ok, fallback)
 	}
 	if status := int(state.code.Load()); status != 0 {
 		return status
@@ -212,80 +216,92 @@ func responseStatusStateFromRequest(r *http.Request) (*responseStatusState, bool
 	return state, ok
 }
 
-func pendingOrCreateResponseStatusState(r *http.Request) *responseStatusState {
+func rememberPendingResponseStatus(r *http.Request, status int32) {
 	if r == nil {
-		return nil
+		return
 	}
-	if state, ok := pendingResponseStatusState(r); ok {
-		return state
+	if pending, ok := lookupPendingResponseStatus(r); ok {
+		pending.code.Store(status)
+		return
 	}
 
-	state := &responseStatusState{
-		pendingRequest: r,
-		pendingDone:    r.Context().Done(),
-	}
-	if state.pendingDone != nil {
-		state.stopPendingCleanup = context.AfterFunc(r.Context(), func() {
-			deletePendingResponseStatusState(state)
+	pending := &pendingResponseStatus{}
+	pending.request = r
+	pending.done = r.Context().Done()
+	pending.code.Store(status)
+	if pending.done != nil {
+		pending.stopCleanup = context.AfterFunc(r.Context(), func() {
+			deletePendingResponseStatus(pending)
 		})
 	}
 
-	actual, loaded := pendingResponseStatusByRequest.LoadOrStore(r, state)
+	actual, loaded := pendingResponseStatusByRequest.LoadOrStore(r, pending)
 	if loaded {
-		deletePendingResponseStatusState(state)
-		return actual.(*responseStatusState)
+		stopPendingResponseStatusCleanup(pending)
+		actual.(*pendingResponseStatus).code.Store(status)
+		return
 	}
-	if state.pendingDone == nil {
-		return state
+	if pending.done == nil {
+		return
 	}
 
-	actual, loaded = pendingResponseStatusByDone.LoadOrStore(state.pendingDone, state)
-	if !loaded {
-		return state
+	actual, loaded = pendingResponseStatusByDone.LoadOrStore(pending.done, pending)
+	if loaded {
+		deletePendingResponseStatus(pending)
+		actual.(*pendingResponseStatus).code.Store(status)
 	}
-	deletePendingResponseStatusState(state)
-	return actual.(*responseStatusState)
 }
 
-func pendingResponseStatusState(r *http.Request) (*responseStatusState, bool) {
+func takePendingResponseStatus(r *http.Request) (int32, bool) {
+	pending, ok := lookupPendingResponseStatus(r)
+	if !ok {
+		return 0, false
+	}
+	deletePendingResponseStatus(pending)
+	return pending.code.Load(), true
+}
+
+func lookupPendingResponseStatus(r *http.Request) (*pendingResponseStatus, bool) {
 	if r == nil {
 		return nil, false
 	}
-	if state, ok := pendingResponseStatusByRequest.Load(r); ok {
-		return state.(*responseStatusState), true
+	if value, ok := pendingResponseStatusByRequest.Load(r); ok {
+		return value.(*pendingResponseStatus), true
 	}
 	done := r.Context().Done()
 	if done == nil {
 		return nil, false
 	}
-	if state, ok := pendingResponseStatusByDone.Load(done); ok {
-		return state.(*responseStatusState), true
+	if value, ok := pendingResponseStatusByDone.Load(done); ok {
+		return value.(*pendingResponseStatus), true
 	}
 	return nil, false
 }
 
-func consumePendingResponseStatusState(r *http.Request) (*responseStatusState, bool) {
-	state, ok := pendingResponseStatusState(r)
-	if !ok {
-		return nil, false
+func responseStatusOrFallback(status int32, ok bool, fallback int) int {
+	if ok && status != 0 {
+		return int(status)
 	}
-	deletePendingResponseStatusState(state)
-	return state, true
+	return fallback
 }
 
-func deletePendingResponseStatusState(state *responseStatusState) {
-	if state == nil {
+func stopPendingResponseStatusCleanup(pending *pendingResponseStatus) {
+	if pending != nil && pending.stopCleanup != nil {
+		pending.stopCleanup()
+	}
+}
+
+func deletePendingResponseStatus(pending *pendingResponseStatus) {
+	if pending == nil {
 		return
 	}
-	if state.pendingRequest != nil {
-		pendingResponseStatusByRequest.CompareAndDelete(state.pendingRequest, state)
+	if pending.request != nil {
+		pendingResponseStatusByRequest.CompareAndDelete(pending.request, pending)
 	}
-	if state.pendingDone != nil {
-		pendingResponseStatusByDone.CompareAndDelete(state.pendingDone, state)
+	if pending.done != nil {
+		pendingResponseStatusByDone.CompareAndDelete(pending.done, pending)
 	}
-	if state.stopPendingCleanup != nil {
-		state.stopPendingCleanup()
-	}
+	stopPendingResponseStatusCleanup(pending)
 }
 
 func drainBody(r io.Reader) {

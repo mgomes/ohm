@@ -243,7 +243,7 @@ func TestSetStatusFromMiddlewareAppliesToRender(t *testing.T) {
 		})
 	})
 	app.Get("/render", func(req *Request) error {
-		return req.Render(&renderPayload{Child: &renderChild{}})
+		return req.Render(&renderChild{})
 	})
 
 	response := httptest.NewRecorder()
@@ -274,6 +274,9 @@ func TestSetStatusBeforeHTTPHandlerAppliesToRender(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
 	}
+	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
+		t.Fatalf("pending response status request entry leaked after handler returned")
+	}
 }
 
 func TestSetStatusBeforeHTTPHandlerSurvivesRequestContextCopy(t *testing.T) {
@@ -297,6 +300,12 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestContextCopy(t *testing.T) {
 
 	if response.Code != http.StatusCreated {
 		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s with copied context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
+		t.Fatalf("pending response status request entry leaked after handler returned")
+	}
+	if _, ok := pendingResponseStatusByDone.Load(request.Context().Done()); ok {
+		t.Fatalf("pending response status context entry leaked after handler returned")
 	}
 }
 
