@@ -64,6 +64,17 @@ func withResponseStatus(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, state))
 }
 
+func withNewResponseStatus(r *http.Request) *http.Request {
+	if r == nil {
+		return nil
+	}
+	state := &responseStatusState{}
+	if status, ok := takePendingResponseStatus(r); ok {
+		state.code.Store(status)
+	}
+	return r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, state))
+}
+
 // SetStatus records the status code used by Render.
 func SetStatus(r *http.Request, status int) {
 	state, ok := responseStatusStateFromRequest(r)
