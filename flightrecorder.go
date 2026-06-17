@@ -44,14 +44,24 @@ type FlightRecorder struct {
 	threshold time.Duration
 	logger    *slog.Logger
 
-	// writeMu serializes snapshots: runtime/trace.FlightRecorder.WriteTo fails
-	// when another WriteTo is in progress, so concurrent triggers must queue
-	// rather than drop a high-value snapshot.
-	writeMu sync.Mutex
+	// snapshotMu guards snapshotActive and pendingSnapshot without covering
+	// runtime/trace.FlightRecorder.WriteTo. Concurrent triggers only wait for
+	// this short state transition, not for trace flushes or sink writes.
+	snapshotMu sync.Mutex
+
+	// snapshotActive records that one goroutine owns snapshot writing.
+	snapshotActive bool
 
 	// recording tracks lifecycle separately from the runtime recorder so late
 	// snapshots from abandoned handlers can be skipped or downgraded after Stop.
 	recording atomic.Bool
+
+	// pendingSnapshot records that another trigger arrived while a snapshot was
+	// already being written. The active writer drains the pending trigger into a
+	// follow-up capture instead of making request goroutines wait behind runtime
+	// trace and sink I/O.
+	pendingSnapshot    snapshotTrigger
+	hasPendingSnapshot bool
 
 	// seq makes snapshot filenames unique so simultaneous triggers sharing a
 	// reason and correlation id cannot overwrite each other's artifact.
@@ -159,14 +169,85 @@ func (f *FlightRecorder) snapshot(ctx context.Context, reason string) {
 		return
 	}
 
-	id := correlationID(ctx)
+	trigger := snapshotTrigger{
+		ctx:    ctx,
+		reason: reason,
+		id:     correlationID(ctx),
+	}
 	// Stamp the id into the trace itself so the snapshot joins up with the log
 	// line and OpenTelemetry span for the same incident.
-	trace.Log(ctx, "ohm.flight", reason+" "+id)
+	trace.Log(trigger.ctx, "ohm.flight", trigger.reason+" "+trigger.id)
 
-	f.writeMu.Lock()
-	defer f.writeMu.Unlock()
+	if !f.beginSnapshot(trigger) {
+		return
+	}
 
+	for {
+		f.writeSnapshot(trigger.ctx, trigger.reason, trigger.id)
+
+		var ok bool
+		trigger, ok = f.nextSnapshot()
+		if !ok {
+			return
+		}
+
+		trace.Log(trigger.ctx, "ohm.flight", trigger.reason+" "+trigger.id)
+		f.logger.LogAttrs(trigger.ctx, slog.LevelDebug, "flight snapshot follow-up",
+			slog.String("reason", trigger.reason))
+	}
+}
+
+type snapshotTrigger struct {
+	ctx    context.Context
+	reason string
+	id     string
+}
+
+func (f *FlightRecorder) beginSnapshot(trigger snapshotTrigger) bool {
+	f.snapshotMu.Lock()
+	defer f.snapshotMu.Unlock()
+
+	if f.snapshotActive {
+		f.rememberPendingSnapshot(trigger)
+		f.logger.LogAttrs(trigger.ctx, slog.LevelDebug, "flight snapshot coalesced",
+			slog.String("reason", trigger.reason))
+		return false
+	}
+
+	f.snapshotActive = true
+	f.clearPendingSnapshot()
+	return true
+}
+
+func (f *FlightRecorder) rememberPendingSnapshot(trigger snapshotTrigger) {
+	if f.hasPendingSnapshot && f.pendingSnapshot.reason == "panic" && trigger.reason != "panic" {
+		return
+	}
+	f.pendingSnapshot = trigger
+	f.hasPendingSnapshot = true
+}
+
+func (f *FlightRecorder) clearPendingSnapshot() {
+	f.pendingSnapshot = snapshotTrigger{}
+	f.hasPendingSnapshot = false
+}
+
+func (f *FlightRecorder) nextSnapshot() (snapshotTrigger, bool) {
+	f.snapshotMu.Lock()
+	defer f.snapshotMu.Unlock()
+
+	if !f.hasPendingSnapshot || !f.recording.Load() || !f.recorder.Enabled() {
+		f.snapshotActive = false
+		f.clearPendingSnapshot()
+		return snapshotTrigger{}, false
+	}
+
+	trigger := f.pendingSnapshot
+	f.clearPendingSnapshot()
+	return trigger, true
+}
+
+func (f *FlightRecorder) writeSnapshot(ctx context.Context, reason string, id string) {
 	name := snapshotName(reason, id, f.seq.Add(1))
 	writer, err := f.sink.Create(name)
 	if err != nil {

@@ -194,24 +194,214 @@ func TestFlightRecordingTraversalRequestIDStaysInSink(t *testing.T) {
 	}
 }
 
-func TestFlightRecorderSerializesConcurrentSnapshots(t *testing.T) {
+func TestFlightRecorderCoalescesConcurrentSnapshots(t *testing.T) {
 	sink := newMemSink()
-	recorder := startedRecorder(t, sink)
+	blocking := &blockingSink{
+		sink:    sink,
+		created: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	recorder := startedRecorder(t, blocking)
 
-	// Same reason and correlation id for every trigger: snapshots must neither
-	// fail on a concurrent WriteTo nor overwrite each other's filename.
 	ctx := context.WithValue(context.Background(), requestIDKey{}, "req-shared")
+	firstDone := make(chan struct{})
+	go func() {
+		recorder.snapshot(ctx, "slow")
+		close(firstDone)
+	}()
+
+	select {
+	case <-blocking.created:
+	case <-time.After(time.Second):
+		t.Fatalf("first snapshot did not reach sink Create")
+	}
+
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
 			recorder.snapshot(ctx, "slow")
 		})
 	}
-	wg.Wait()
+	contendersDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(contendersDone)
+	}()
 
-	if got := len(sink.names()); got != 8 {
-		t.Errorf("snapshots = %d, want 8 (none dropped or overwritten)", got)
+	select {
+	case <-contendersDone:
+	case <-time.After(time.Second):
+		t.Fatalf("concurrent snapshots queued behind in-progress snapshot, want coalesced")
 	}
+
+	close(blocking.release)
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatalf("first snapshot did not finish after sink release")
+	}
+
+	if got := len(sink.names()); got != 2 {
+		t.Errorf("snapshots = %d, want active snapshot plus one coalesced follow-up", got)
+	}
+}
+
+func TestFlightRecorderPreservesCoalescedSnapshotMetadata(t *testing.T) {
+	sink := newMemSink()
+	blocking := &blockingSink{
+		sink:    sink,
+		created: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	recorder := startedRecorder(t, blocking)
+
+	slowCtx := context.WithValue(context.Background(), requestIDKey{}, "slow-req")
+	writerDone := make(chan struct{})
+	go func() {
+		recorder.snapshot(slowCtx, "slow")
+		close(writerDone)
+	}()
+
+	select {
+	case <-blocking.created:
+	case <-time.After(time.Second):
+		t.Fatalf("first snapshot did not reach sink Create")
+	}
+
+	panicCtx := context.WithValue(context.Background(), requestIDKey{}, "panic-req")
+	recorder.snapshot(panicCtx, "panic")
+	lateSlowCtx := context.WithValue(context.Background(), requestIDKey{}, "late-slow-req")
+	recorder.snapshot(lateSlowCtx, "slow")
+
+	close(blocking.release)
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatalf("snapshot writer did not drain coalesced panic")
+	}
+
+	names := sink.names()
+	if len(names) != 2 {
+		t.Fatalf("snapshots = %d, want slow snapshot plus coalesced panic follow-up", len(names))
+	}
+	if !snapshotNameContains(names, "slow-slow-req") {
+		t.Errorf("snapshots = %v, want one named for the slow request", names)
+	}
+	if !snapshotNameContains(names, "panic-panic-req") {
+		t.Errorf("snapshots = %v, want coalesced follow-up named for the panic request", names)
+	}
+	if snapshotNameContains(names, "slow-late-slow-req") {
+		t.Errorf("snapshots = %v, want pending panic metadata to survive later slow trigger", names)
+	}
+}
+
+func TestFlightRecorderDrainsSnapshotsCoalescedDuringFollowUp(t *testing.T) {
+	sink := newMemSink()
+	firstGate := snapshotGate{created: make(chan struct{}), release: make(chan struct{})}
+	followUpGate := snapshotGate{created: make(chan struct{}), release: make(chan struct{})}
+	blocking := &gatedSink{
+		sink:  sink,
+		gates: []snapshotGate{firstGate, followUpGate},
+	}
+	recorder := startedRecorder(t, blocking)
+
+	ctx := context.WithValue(context.Background(), requestIDKey{}, "req-shared")
+	writerDone := make(chan struct{})
+	go func() {
+		recorder.snapshot(ctx, "slow")
+		close(writerDone)
+	}()
+
+	select {
+	case <-firstGate.created:
+	case <-time.After(time.Second):
+		t.Fatalf("first snapshot did not reach sink Create")
+	}
+
+	recorder.snapshot(ctx, "slow")
+	close(firstGate.release)
+
+	select {
+	case <-followUpGate.created:
+	case <-time.After(time.Second):
+		t.Fatalf("follow-up snapshot did not reach sink Create")
+	}
+
+	lateTriggerDone := make(chan struct{})
+	go func() {
+		recorder.snapshot(ctx, "slow")
+		close(lateTriggerDone)
+	}()
+
+	select {
+	case <-lateTriggerDone:
+	case <-time.After(time.Second):
+		t.Fatalf("snapshot trigger queued behind follow-up snapshot, want coalesced")
+	}
+
+	close(followUpGate.release)
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatalf("snapshot writer did not drain pending follow-up")
+	}
+
+	if got := len(sink.names()); got != 3 {
+		t.Errorf("snapshots = %d, want initial snapshot plus two drained follow-ups", got)
+	}
+}
+
+func snapshotNameContains(names []string, needle string) bool {
+	for _, name := range names {
+		if strings.Contains(name, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+type blockingSink struct {
+	sink    Sink
+	once    sync.Once
+	created chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSink) Create(name string) (io.WriteCloser, error) {
+	s.once.Do(func() {
+		close(s.created)
+		<-s.release
+	})
+	return s.sink.Create(name)
+}
+
+type snapshotGate struct {
+	created chan struct{}
+	release chan struct{}
+}
+
+type gatedSink struct {
+	sink Sink
+
+	mu      sync.Mutex
+	gates   []snapshotGate
+	creates int
+}
+
+func (s *gatedSink) Create(name string) (io.WriteCloser, error) {
+	s.mu.Lock()
+	var gate *snapshotGate
+	if s.creates < len(s.gates) {
+		gate = &s.gates[s.creates]
+	}
+	s.creates++
+	s.mu.Unlock()
+
+	if gate != nil {
+		close(gate.created)
+		<-gate.release
+	}
+	return s.sink.Create(name)
 }
 
 func TestCorrelationIDPrefersTraceID(t *testing.T) {

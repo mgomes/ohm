@@ -142,5 +142,10 @@ only for high-value events such as recovered panics or slow requests. Snapshot
 files are correlated with logs and spans by request id or trace id, and are read
 with `go tool trace`.
 
+If another request triggers a snapshot while one is already being written, Ohm
+coalesces the trigger instead of queueing the request goroutine. The active
+writer drains pending trigger batches with follow-up snapshots without
+multiplying request goroutines during an incident.
+
 Use flight recording when you need to understand why the Go process was slow,
 not when you need another application span.
