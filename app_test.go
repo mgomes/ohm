@@ -90,6 +90,26 @@ func TestAppDefaultErrorHandlerDoesNotExposeWrappedInternalError(t *testing.T) {
 	}
 }
 
+func TestAppDefaultErrorHandlerDoesNotWriteAfterCommittedResponse(t *testing.T) {
+	app := New()
+	app.Get("/partial", func(req *Request) error {
+		req.PlainText(http.StatusOK, "partial")
+		return NewHTTPError(http.StatusBadRequest, "boom", errors.New("bad request"))
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/partial", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if res.Body.String() != "partial" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "partial")
+	}
+}
+
 func TestErrorResponseUsesHTTPErrorPublicMessage(t *testing.T) {
 	err := NewHTTPError(http.StatusNotFound, "post not found", errors.New("missing post"))
 
@@ -302,6 +322,33 @@ func TestAppUsesCustomErrorHandler(t *testing.T) {
 	}
 	if res.Body.String() != "short and stout" {
 		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "short and stout")
+	}
+}
+
+func TestAppCustomErrorHandlerDoesNotRunAfterCommittedResponse(t *testing.T) {
+	var handled bool
+	app := New(WithErrorHandler(func(req *Request, err error) {
+		handled = true
+		req.PlainText(http.StatusInternalServerError, err.Error())
+	}))
+	app.Get("/partial", func(req *Request) error {
+		req.PlainText(http.StatusAccepted, "partial")
+		return errors.New("handler failed after commit")
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/partial", nil)
+
+	app.ServeHTTP(res, request)
+
+	if handled {
+		t.Errorf("App.ServeHTTP(%s %s) custom error handler ran after committed response, want skipped", request.Method, request.URL.Path)
+	}
+	if res.Code != http.StatusAccepted {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusAccepted)
+	}
+	if res.Body.String() != "partial" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "partial")
 	}
 }
 
