@@ -2,9 +2,11 @@ package scrub
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -54,6 +56,8 @@ type hiddenCredentialWrapError struct {
 type customEncodedError struct {
 	password string
 }
+
+var benchmarkSensitiveKeySink bool
 
 func (e credentialError) Error() string {
 	return e.Message + ": " + e.Password
@@ -134,6 +138,24 @@ func TestSensitiveKeyMatchesCommonStyles(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("Redactor.SensitiveKey(%q) = %t, want %t", tt.key, got, tt.want)
 		}
+	}
+}
+
+func TestWithKeysInvalidatesSensitiveKeyCache(t *testing.T) {
+	redactor := New(
+		func(redactor *Redactor) {
+			if redactor.SensitiveKey("trace_id") {
+				t.Errorf("Redactor.SensitiveKey(%q) = true before WithKeys, want false", "trace_id")
+			}
+		},
+		WithKeys("trace_id"),
+	)
+
+	if !redactor.SensitiveKey("trace_id") {
+		t.Errorf("Redactor.SensitiveKey(%q) = false after WithKeys, want true", "trace_id")
+	}
+	if got := redactor.Any("trace_id", "abc123"); got != defaultReplacement {
+		t.Errorf("Redactor.Any(%q, %q) = %v, want %v", "trace_id", "abc123", got, defaultReplacement)
 	}
 }
 
@@ -799,15 +821,67 @@ func TestHandlerRedactsWithAttrs(t *testing.T) {
 
 func TestHandlerRedactsSensitiveGroups(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(NewHandler(slog.NewTextHandler(&buf, nil))).WithGroup("password")
+	logger := slog.New(NewHandler(slog.NewTextHandler(&buf, nil))).WithGroup("password").With("attached", "hidden")
 
 	logger.Info("request", slog.String("value", "secret"))
 
 	output := buf.String()
-	if strings.Contains(output, "secret") {
-		t.Errorf("logged output %q contains sensitive value %q", output, "secret")
+	for _, leaked := range []string{"secret", "hidden"} {
+		if strings.Contains(output, leaked) {
+			t.Errorf("logged output %q contains sensitive value %q", output, leaked)
+		}
 	}
 	if !strings.Contains(output, "password.value=[REDACTED]") {
 		t.Errorf("logged output %q contains password.value=[REDACTED], want true", output)
+	}
+	if !strings.Contains(output, "password.attached=[REDACTED]") {
+		t.Errorf("logged output %q contains password.attached=[REDACTED], want true", output)
+	}
+}
+
+func BenchmarkSensitiveKeyStatic(b *testing.B) {
+	redactor := New()
+	keys := []string{
+		"method",
+		"path",
+		"status",
+		"duration",
+		"request_id",
+		"user_agent",
+		"authorization",
+		"session_id",
+	}
+	for _, key := range keys {
+		redactor.SensitiveKey(key)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		sensitive := false
+		for _, key := range keys {
+			sensitive = redactor.SensitiveKey(key) || sensitive
+		}
+		benchmarkSensitiveKeySink = sensitive
+	}
+}
+
+func BenchmarkHandlerSensitiveGroupAttrs(b *testing.B) {
+	handler := NewHandler(slog.NewTextHandler(io.Discard, nil)).WithGroup("password")
+	record := slog.NewRecord(time.Time{}, slog.LevelInfo, "request", 0)
+	record.AddAttrs(
+		slog.String("method", "POST"),
+		slog.String("path", "/sessions"),
+		slog.String("status", "200"),
+		slog.String("duration", "1ms"),
+		slog.String("authorization", "Bearer token"),
+		slog.String("session_id", "session"),
+		slog.String("request_id", "req-1"),
+	)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := handler.Handle(context.Background(), record); err != nil {
+			b.Fatalf("Handler.Handle(ctx, record) error = %v, want nil", err)
+		}
 	}
 }

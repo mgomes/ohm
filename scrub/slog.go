@@ -8,9 +8,10 @@ import (
 
 // Handler is a slog handler that redacts sensitive attributes before logging.
 type Handler struct {
-	next     slog.Handler
-	redactor *Redactor
-	groups   []string
+	next           slog.Handler
+	redactor       *Redactor
+	groups         []string
+	sensitiveGroup bool
 }
 
 // NewHandler wraps next with a redacting slog handler.
@@ -46,9 +47,10 @@ func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		redacted = append(redacted, h.attr(attr))
 	}
 	return &Handler{
-		next:     h.next.WithAttrs(redacted),
-		redactor: h.redactor,
-		groups:   h.groups,
+		next:           h.next.WithAttrs(redacted),
+		redactor:       h.redactor,
+		groups:         h.groups,
+		sensitiveGroup: h.sensitiveGroup,
 	}
 }
 
@@ -58,24 +60,16 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 	groups = append(groups, h.groups...)
 	groups = append(groups, name)
 	return &Handler{
-		next:     h.next.WithGroup(name),
-		redactor: h.redactor,
-		groups:   groups,
+		next:           h.next.WithGroup(name),
+		redactor:       h.redactor,
+		groups:         groups,
+		sensitiveGroup: h.sensitiveGroup || h.redactor.SensitiveKey(name),
 	}
 }
 
 func (h *Handler) attr(attr slog.Attr) slog.Attr {
-	if h.inSensitiveGroup() {
+	if h.sensitiveGroup {
 		return slog.String(attr.Key, h.redactor.replacementValue())
 	}
 	return h.redactor.Attr(attr)
-}
-
-func (h *Handler) inSensitiveGroup() bool {
-	for _, group := range h.groups {
-		if h.redactor.SensitiveKey(group) {
-			return true
-		}
-	}
-	return false
 }
