@@ -144,7 +144,7 @@ with `go tool trace`.
 
 If another request triggers a snapshot while one is already being written, Ohm
 coalesces the trigger instead of queueing the request goroutine. The active
-writer takes one bounded follow-up snapshot for coalesced triggers without
+writer drains pending trigger batches with follow-up snapshots without
 multiplying request goroutines during an incident.
 
 Use flight recording when you need to understand why the Go process was slow,

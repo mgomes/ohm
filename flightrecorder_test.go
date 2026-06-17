@@ -246,6 +246,62 @@ func TestFlightRecorderCoalescesConcurrentSnapshots(t *testing.T) {
 	}
 }
 
+func TestFlightRecorderDrainsSnapshotsCoalescedDuringFollowUp(t *testing.T) {
+	sink := newMemSink()
+	firstGate := snapshotGate{created: make(chan struct{}), release: make(chan struct{})}
+	followUpGate := snapshotGate{created: make(chan struct{}), release: make(chan struct{})}
+	blocking := &gatedSink{
+		sink:  sink,
+		gates: []snapshotGate{firstGate, followUpGate},
+	}
+	recorder := startedRecorder(t, blocking)
+
+	ctx := context.WithValue(context.Background(), requestIDKey{}, "req-shared")
+	writerDone := make(chan struct{})
+	go func() {
+		recorder.snapshot(ctx, "slow")
+		close(writerDone)
+	}()
+
+	select {
+	case <-firstGate.created:
+	case <-time.After(time.Second):
+		t.Fatalf("first snapshot did not reach sink Create")
+	}
+
+	recorder.snapshot(ctx, "slow")
+	close(firstGate.release)
+
+	select {
+	case <-followUpGate.created:
+	case <-time.After(time.Second):
+		t.Fatalf("follow-up snapshot did not reach sink Create")
+	}
+
+	lateTriggerDone := make(chan struct{})
+	go func() {
+		recorder.snapshot(ctx, "slow")
+		close(lateTriggerDone)
+	}()
+
+	select {
+	case <-lateTriggerDone:
+	case <-time.After(time.Second):
+		t.Fatalf("snapshot trigger queued behind follow-up snapshot, want coalesced")
+	}
+
+	close(followUpGate.release)
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatalf("snapshot writer did not drain pending follow-up")
+	}
+
+	if got := len(sink.names()); got != 3 {
+		t.Errorf("snapshots = %d, want initial snapshot plus two drained follow-ups", got)
+	}
+}
+
 type blockingSink struct {
 	sink    Sink
 	once    sync.Once
@@ -258,6 +314,35 @@ func (s *blockingSink) Create(name string) (io.WriteCloser, error) {
 		close(s.created)
 		<-s.release
 	})
+	return s.sink.Create(name)
+}
+
+type snapshotGate struct {
+	created chan struct{}
+	release chan struct{}
+}
+
+type gatedSink struct {
+	sink Sink
+
+	mu      sync.Mutex
+	gates   []snapshotGate
+	creates int
+}
+
+func (s *gatedSink) Create(name string) (io.WriteCloser, error) {
+	s.mu.Lock()
+	var gate *snapshotGate
+	if s.creates < len(s.gates) {
+		gate = &s.gates[s.creates]
+	}
+	s.creates++
+	s.mu.Unlock()
+
+	if gate != nil {
+		close(gate.created)
+		<-gate.release
+	}
 	return s.sink.Create(name)
 }
 
