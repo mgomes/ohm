@@ -1,6 +1,7 @@
 package ohm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -87,6 +88,26 @@ func TestAppDefaultErrorHandlerDoesNotExposeWrappedInternalError(t *testing.T) {
 	}
 	if res.Body.String() != http.StatusText(http.StatusInternalServerError) {
 		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), http.StatusText(http.StatusInternalServerError))
+	}
+}
+
+func TestAppDefaultErrorHandlerDoesNotWriteAfterCommittedResponse(t *testing.T) {
+	app := New()
+	app.Get("/partial", func(req *Request) error {
+		req.PlainText(http.StatusOK, "partial")
+		return NewHTTPError(http.StatusBadRequest, "boom", errors.New("bad request"))
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/partial", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if res.Body.String() != "partial" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "partial")
 	}
 }
 
@@ -284,6 +305,220 @@ func (w *benchmarkResponseWriter) reset() {
 	w.bytes = 0
 }
 
+func TestAppErrorHandlerRunsAfterZeroByteReadFromError(t *testing.T) {
+	readErr := errors.New("source failed before writing")
+	app := New()
+	app.Get("/stream", func(req *Request) error {
+		readerFrom, ok := req.ResponseWriter().(io.ReaderFrom)
+		if !ok {
+			t.Errorf("req.ResponseWriter() implements io.ReaderFrom = false, want true")
+			return nil
+		}
+
+		_, err := readerFrom.ReadFrom(errorReader{err: readErr})
+		return err
+	})
+
+	res := &readerFromRecorder{}
+	request := httptest.NewRequest(http.MethodGet, "/stream", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.readFromCalls != 1 {
+		t.Errorf("App.ServeHTTP(%s %s) ReadFrom calls = %d, want %d", request.Method, request.URL.Path, res.readFromCalls, 1)
+	}
+	if res.status != http.StatusInternalServerError {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusInternalServerError)
+	}
+	if res.body.String() != http.StatusText(http.StatusInternalServerError) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.body.String(), http.StatusText(http.StatusInternalServerError))
+	}
+}
+
+type readerFromRecorder struct {
+	header        http.Header
+	body          bytes.Buffer
+	status        int
+	readFromCalls int
+}
+
+func (w *readerFromRecorder) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *readerFromRecorder) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(body)
+}
+
+func (w *readerFromRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *readerFromRecorder) ReadFrom(src io.Reader) (int64, error) {
+	w.readFromCalls++
+	return io.Copy(readerFromBodyWriter{recorder: w}, src)
+}
+
+type readerFromBodyWriter struct {
+	recorder *readerFromRecorder
+}
+
+func (w readerFromBodyWriter) Write(body []byte) (int, error) {
+	return w.recorder.Write(body)
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func TestAppResponseControllerFlushPreservesFlushError(t *testing.T) {
+	flushErr := errors.New("flush failed")
+	var gotErr error
+	app := New()
+	app.Get("/stream", func(req *Request) error {
+		gotErr = http.NewResponseController(req.ResponseWriter()).Flush()
+		return nil
+	})
+
+	res := &flushErrorRecorder{flushErr: flushErr}
+	request := httptest.NewRequest(http.MethodGet, "/stream", nil)
+
+	app.ServeHTTP(res, request)
+
+	if !errors.Is(gotErr, flushErr) {
+		t.Errorf("ResponseController.Flush() error = %v, want %v", gotErr, flushErr)
+	}
+	if res.flushErrorCalls != 1 {
+		t.Errorf("App.ServeHTTP(%s %s) FlushError calls = %d, want %d", request.Method, request.URL.Path, res.flushErrorCalls, 1)
+	}
+	if res.flushCalls != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) Flush calls = %d, want %d", request.Method, request.URL.Path, res.flushCalls, 0)
+	}
+	if res.status != http.StatusOK {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusOK)
+	}
+}
+
+type flushErrorRecorder struct {
+	header          http.Header
+	status          int
+	flushErr        error
+	flushCalls      int
+	flushErrorCalls int
+}
+
+func (w *flushErrorRecorder) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *flushErrorRecorder) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return len(body), nil
+}
+
+func (w *flushErrorRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *flushErrorRecorder) Flush() {
+	w.flushCalls++
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+}
+
+func (w *flushErrorRecorder) FlushError() error {
+	w.flushErrorCalls++
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.flushErr
+}
+
+func TestAppRawResponseWriterPreservesCustomExtensions(t *testing.T) {
+	var gotCustom bool
+	app := New()
+	app.Get("/custom", func(req *Request) error {
+		custom, ok := req.RawResponseWriter().(customResponseWriterExtension)
+		gotCustom = ok
+		if !ok {
+			return errors.New("custom response writer extension missing")
+		}
+
+		req.PlainText(http.StatusOK, custom.CustomResponseWriterValue())
+		return nil
+	})
+
+	res := &customExtensionRecorder{value: "custom"}
+	request := httptest.NewRequest(http.MethodGet, "/custom", nil)
+
+	app.ServeHTTP(res, request)
+
+	if !gotCustom {
+		t.Errorf("Request.RawResponseWriter() custom extension = false, want true")
+	}
+	if res.status != http.StatusOK {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusOK)
+	}
+	if res.body.String() != "custom" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.body.String(), "custom")
+	}
+}
+
+type customResponseWriterExtension interface {
+	CustomResponseWriterValue() string
+}
+
+type customExtensionRecorder struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+	value  string
+}
+
+func (w *customExtensionRecorder) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *customExtensionRecorder) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(body)
+}
+
+func (w *customExtensionRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *customExtensionRecorder) CustomResponseWriterValue() string {
+	return w.value
+}
+
 func TestAppUsesCustomErrorHandler(t *testing.T) {
 	app := New(WithErrorHandler(func(req *Request, err error) {
 		req.PlainText(http.StatusTeapot, err.Error())
@@ -302,6 +537,33 @@ func TestAppUsesCustomErrorHandler(t *testing.T) {
 	}
 	if res.Body.String() != "short and stout" {
 		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "short and stout")
+	}
+}
+
+func TestAppCustomErrorHandlerDoesNotRunAfterCommittedResponse(t *testing.T) {
+	var handled bool
+	app := New(WithErrorHandler(func(req *Request, err error) {
+		handled = true
+		req.PlainText(http.StatusInternalServerError, err.Error())
+	}))
+	app.Get("/partial", func(req *Request) error {
+		req.PlainText(http.StatusAccepted, "partial")
+		return errors.New("handler failed after commit")
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/partial", nil)
+
+	app.ServeHTTP(res, request)
+
+	if handled {
+		t.Errorf("App.ServeHTTP(%s %s) custom error handler ran after committed response, want skipped", request.Method, request.URL.Path)
+	}
+	if res.Code != http.StatusAccepted {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusAccepted)
+	}
+	if res.Body.String() != "partial" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "partial")
 	}
 }
 

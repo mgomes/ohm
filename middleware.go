@@ -157,7 +157,9 @@ func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) 
 		ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
 			return func(src io.Reader) (int64, error) {
 				n, err := next(src)
-				state.mark(http.StatusOK)
+				if n > 0 {
+					state.mark(http.StatusOK)
+				}
 				return n, err
 			}
 		},
@@ -165,6 +167,13 @@ func trackResponse(w http.ResponseWriter) (http.ResponseWriter, *responseState) 
 			return func() {
 				next()
 				state.mark(http.StatusOK)
+			}
+		},
+		FlushError: func(next httpsnoop.FlushErrorFunc) httpsnoop.FlushErrorFunc {
+			return func() error {
+				err := next()
+				state.mark(http.StatusOK)
+				return err
 			}
 		},
 		Hijack: func(next httpsnoop.HijackFunc) httpsnoop.HijackFunc {

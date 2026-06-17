@@ -215,11 +215,15 @@ func staticPrefix(pattern string) string {
 
 func (a *App) adapt(handler Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracked, state := trackResponse(w)
 		r = withResponseStatus(r)
 		markResponseStatusHandlerStarted(r)
-		req := newRequest(w, r)
+		req := newRequestWithRawResponseWriter(tracked, w, r)
 		if err := handler(req); err != nil {
 			recordHandlerError(r.Context(), err)
+			if state.committed() {
+				return
+			}
 			a.errorHandler(req, err)
 		}
 	})
