@@ -26,6 +26,33 @@ func TestServerCommandRunsShutdownHooks(t *testing.T) {
 	}
 }
 
+func TestServerCommandAcceptsNamedShutdownHooks(t *testing.T) {
+	type namedShutdownHook func(context.Context) error
+
+	var ran bool
+	hook := namedShutdownHook(func(context.Context) error {
+		ran = true
+		return nil
+	})
+	command := ServerCommand(&testHandler{},
+		WithShutdownHook(hook),
+		WithServerRunner(func(ctx context.Context, _ *http.Server, _ time.Duration, hooks []ShutdownHook) error {
+			if len(hooks) != 1 {
+				t.Errorf("WithShutdownHook(named hook) stored %d hooks, want 1", len(hooks))
+				return nil
+			}
+			return hooks[0](ctx)
+		}),
+	)
+
+	if err := command.Run(context.Background(), IO{}, nil); err != nil {
+		t.Fatalf("ServerCommand(...).Run error = %v, want nil", err)
+	}
+	if !ran {
+		t.Errorf("named shutdown hook ran = false, want true")
+	}
+}
+
 func TestRunHTTPServerRunsHooksWithinSharedDeadline(t *testing.T) {
 	var hookDeadline bool
 	server := &http.Server{Addr: "127.0.0.1:invalid"}
