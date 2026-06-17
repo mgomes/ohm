@@ -19,8 +19,13 @@ var (
 	formURLValuesType       = reflect.TypeOf(url.Values{})
 )
 
+const (
+	maxFormBodyBytes       int64 = 10 << 20
+	maxFormIndexedElements       = 10_000
+)
+
 func decodeForm(r *http.Request, v any) error {
-	body, err := io.ReadAll(r.Body)
+	body, err := readFormBody(r.Body, maxFormBodyBytes)
 	if err != nil {
 		return fmt.Errorf("read form body: %w", err)
 	}
@@ -30,6 +35,17 @@ func decodeForm(r *http.Request, v any) error {
 		return fmt.Errorf("parse form body: %w", err)
 	}
 	return decodeFormValues(values, v)
+}
+
+func readFormBody(body io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, NewHTTPError(http.StatusRequestEntityTooLarge, "", fmt.Errorf("form body exceeds %d byte limit", limit))
+	}
+	return data, nil
 }
 
 func decodeFormValues(values url.Values, dst any) error {
@@ -341,6 +357,9 @@ func indexedFormElement(target reflect.Value, index int, name string) (reflect.V
 		return target.Index(index), nil
 	}
 
+	if index >= maxFormIndexedElements {
+		return reflect.Value{}, fmt.Errorf("form field %q index %d exceeds max index %d", name, index, maxFormIndexedElements-1)
+	}
 	if index >= target.Len() {
 		extra := reflect.MakeSlice(target.Type(), index-target.Len()+1, index-target.Len()+1)
 		target.Set(reflect.AppendSlice(target, extra))
