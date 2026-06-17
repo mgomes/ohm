@@ -136,12 +136,12 @@ func (a *App) MethodNotAllowed(handler MethodNotAllowedHandler) {
 
 // ServeHTTP serves HTTP requests.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a.router.ServeHTTP(w, r)
+	a.router.ServeHTTP(w, withResponseStatus(r))
 }
 
 // HTTPHandler returns the underlying HTTP handler.
 func (a *App) HTTPHandler() http.Handler {
-	return a.router
+	return http.HandlerFunc(a.ServeHTTP)
 }
 
 // Routes returns registered routes sorted by method and pattern.

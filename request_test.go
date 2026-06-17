@@ -233,6 +233,28 @@ func TestSetStatusDoesNotReplaceRequestContext(t *testing.T) {
 	}
 }
 
+func TestSetStatusFromMiddlewareAppliesToRender(t *testing.T) {
+	app := New()
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			SetStatus(r, http.StatusAccepted)
+			next.ServeHTTP(w, r)
+		})
+	})
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&renderPayload{Child: &renderChild{}})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
 func TestSetStatusDoesNotRaceWithRequestContextReaders(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
