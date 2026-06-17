@@ -24,6 +24,7 @@ type MethodNotAllowedHandler func(http.ResponseWriter, *http.Request, []string)
 type App struct {
 	router       chi.Router
 	errorHandler ErrorHandler
+	routeMethods []string
 }
 
 // Option configures an App.
@@ -59,12 +60,13 @@ func (a *App) Use(middlewares ...Middleware) {
 
 // Handle registers handler for method and pattern.
 func (a *App) Handle(method string, pattern string, handler Handler) {
-	a.router.Method(method, pattern, a.adapt(handler))
+	a.HandleHTTP(method, pattern, a.adapt(handler))
 }
 
 // HandleHTTP registers handler for method and pattern.
 func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
 	a.router.Method(method, pattern, handler)
+	a.addRouteMethod(method)
 }
 
 // Get registers a GET route.
@@ -175,35 +177,32 @@ func (a *App) Routes() ([]Route, error) {
 
 // AllowedMethods returns HTTP methods that match path.
 func (a *App) AllowedMethods(path string) []string {
-	return allowedMethods(a.router, path)
+	return allowedMethods(a.router, a.routeMethods, path)
 }
 
-func allowedMethods(routes chi.Routes, path string) []string {
-	if routes == nil {
+func allowedMethods(routes chi.Routes, methods []string, path string) []string {
+	if routes == nil || len(methods) == 0 {
 		return nil
 	}
-
-	seen := map[string]struct{}{}
-	var methods []string
-	if err := chi.Walk(routes, func(method string, _ string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		if _, ok := seen[method]; ok {
-			return nil
-		}
-		seen[method] = struct{}{}
-		methods = append(methods, method)
-		return nil
-	}); err != nil {
-		return nil
-	}
-	slices.Sort(methods)
 
 	var allowed []string
+	ctx := chi.NewRouteContext()
 	for _, method := range methods {
-		if routes.Match(chi.NewRouteContext(), method, path) {
+		ctx.Reset()
+		if routes.Match(ctx, method, path) {
 			allowed = append(allowed, method)
 		}
 	}
 	return allowed
+}
+
+func (a *App) addRouteMethod(method string) {
+	method = strings.ToUpper(method)
+	index, found := slices.BinarySearch(a.routeMethods, method)
+	if found {
+		return
+	}
+	a.routeMethods = slices.Insert(a.routeMethods, index, method)
 }
 
 func staticPrefix(pattern string) string {
