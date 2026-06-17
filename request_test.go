@@ -317,6 +317,78 @@ func TestRequestDecodeInvalidFormMapTargetRemainsInternalServerError(t *testing.
 	}
 }
 
+func TestRequestDecodeInvalidFormStructTargetRemainsInternalServerError(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		decode func(*Request) error
+	}{
+		{
+			name: "nested non string map key",
+			body: "bad.foo=bar",
+			decode: func(req *Request) error {
+				var payload struct {
+					Bad map[int]string `form:"bad"`
+				}
+				return req.Decode(&payload)
+			},
+		},
+		{
+			name: "unsupported field type",
+			body: "bad=x",
+			decode: func(req *Request) error {
+				var payload struct {
+					Bad chan string `form:"bad"`
+				}
+				return req.Decode(&payload)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := New()
+			app.Post("/posts", tt.decode)
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			app.ServeHTTP(response, request)
+
+			if response.Code != http.StatusInternalServerError {
+				t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusInternalServerError)
+			}
+			if got := response.Body.String(); got != http.StatusText(http.StatusInternalServerError) {
+				t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusInternalServerError))
+			}
+		})
+	}
+}
+
+func TestRequestDecodeInvalidFormScalarRemainsBadRequest(t *testing.T) {
+	app := New()
+	app.Post("/posts", func(req *Request) error {
+		var payload struct {
+			Count int `form:"count"`
+		}
+		return req.Decode(&payload)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader("count=many"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusBadRequest)
+	}
+	if got := response.Body.String(); got != http.StatusText(http.StatusBadRequest) {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, http.StatusText(http.StatusBadRequest))
+	}
+}
+
 func TestRequestRenderRunsNestedRenderersAndUsesStatus(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {

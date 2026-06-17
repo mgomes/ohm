@@ -234,6 +234,10 @@ func decodeClientInputError(err error) error {
 	if errors.As(err, &httpErr) {
 		return err
 	}
+	var targetErr *formTargetError
+	if errors.As(err, &targetErr) {
+		return err
+	}
 	return &DecodeError{
 		Status: http.StatusBadRequest,
 		Err:    err,

@@ -25,6 +25,22 @@ const (
 	maxFormIndexedElements       = 10_000
 )
 
+type formTargetError struct {
+	err error
+}
+
+func newFormTargetError(format string, args ...any) error {
+	return &formTargetError{err: fmt.Errorf(format, args...)}
+}
+
+func (e *formTargetError) Error() string {
+	return e.err.Error()
+}
+
+func (e *formTargetError) Unwrap() error {
+	return e.err
+}
+
 func decodeForm(r *http.Request, v any) error {
 	body, err := readFormBody(r.Body, maxFormBodyBytes)
 	if err != nil {
@@ -51,12 +67,12 @@ func readFormBody(body io.Reader, limit int64) ([]byte, error) {
 
 func decodeFormValues(values url.Values, dst any) error {
 	if dst == nil {
-		return fmt.Errorf("form decode target is required")
+		return newFormTargetError("form decode target is required")
 	}
 
 	value := reflect.ValueOf(dst)
 	if value.Kind() != reflect.Ptr || value.IsNil() {
-		return fmt.Errorf("form decode target must be a non-nil pointer")
+		return newFormTargetError("form decode target must be a non-nil pointer")
 	}
 
 	target := value.Elem()
@@ -68,7 +84,7 @@ func decodeFormValues(values url.Values, dst any) error {
 		return decodeFormMap(values, target)
 	}
 	if target.Kind() != reflect.Struct {
-		return fmt.Errorf("form decode target must point to a struct, map, or url.Values")
+		return newFormTargetError("form decode target must point to a struct, map, or url.Values")
 	}
 
 	decoder := newFormDecoder(values)
@@ -146,7 +162,7 @@ func decodeFormMap(values url.Values, target reflect.Value) error {
 	case reflect.Slice:
 		elem := target.Type().Elem()
 		if elem.Elem().Kind() != reflect.String {
-			return fmt.Errorf("form map target values must be string or []string")
+			return newFormTargetError("form map target values must be string or []string")
 		}
 		for key, raw := range values {
 			copied := reflect.MakeSlice(elem, len(raw), len(raw))
@@ -158,13 +174,13 @@ func decodeFormMap(values url.Values, target reflect.Value) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("form map target values must be string or []string")
+		return newFormTargetError("form map target values must be string or []string")
 	}
 }
 
 func validateTopLevelFormMapTarget(targetType reflect.Type) error {
 	if targetType.Key().Kind() != reflect.String {
-		return fmt.Errorf("form map target key type must be string")
+		return newFormTargetError("form map target key type must be string")
 	}
 	valueType := targetType.Elem()
 	if valueType.Kind() == reflect.String {
@@ -173,7 +189,7 @@ func validateTopLevelFormMapTarget(targetType reflect.Type) error {
 	if valueType.Kind() == reflect.Slice && valueType.Elem().Kind() == reflect.String {
 		return nil
 	}
-	return fmt.Errorf("form map target values must be string or []string")
+	return newFormTargetError("form map target values must be string or []string")
 }
 
 func (d *formDecoder) decodeStruct(target reflect.Value, prefix string) error {
@@ -308,7 +324,7 @@ func canDecodeNestedFormMap(field reflect.Value) bool {
 
 func (d *formDecoder) decodeMapPrefix(target reflect.Value, prefix string) error {
 	if target.Type().Key().Kind() != reflect.String {
-		return fmt.Errorf("form map field %q key type must be string", prefix)
+		return newFormTargetError("form map field %q key type must be string", prefix)
 	}
 	if target.IsNil() {
 		target.Set(reflect.MakeMap(target.Type()))
@@ -344,7 +360,7 @@ func canDecodeIndexedFormField(field reflect.Value) bool {
 
 func (d *formDecoder) decodeIndexedField(target reflect.Value, prefix string) error {
 	if target.Kind() != reflect.Slice && target.Kind() != reflect.Array {
-		return fmt.Errorf("form field %q must be a slice or array", prefix)
+		return newFormTargetError("form field %q must be a slice or array", prefix)
 	}
 
 	fieldPrefix := prefix + "."
@@ -531,7 +547,7 @@ func setFormScalar(field reflect.Value, raw string, name string) error {
 		field.SetString(raw)
 		return nil
 	default:
-		return fmt.Errorf("decode form field %q: unsupported type %s", name, field.Type())
+		return newFormTargetError("decode form field %q: unsupported type %s", name, field.Type())
 	}
 }
 
@@ -583,7 +599,7 @@ func setFormText(field reflect.Value, raw string, name string) error {
 	} else if field.CanAddr() && field.Addr().Type().Implements(formTextUnmarshalerType) {
 		unmarshaler = field.Addr().Interface().(encoding.TextUnmarshaler)
 	} else {
-		return fmt.Errorf("decode form field %q: unsupported text target %s", name, field.Type())
+		return newFormTargetError("decode form field %q: unsupported text target %s", name, field.Type())
 	}
 	if err := unmarshaler.UnmarshalText([]byte(raw)); err != nil {
 		return fmt.Errorf("decode form field %q as %s: %w", name, field.Type(), err)
