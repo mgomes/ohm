@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 )
 
 type responseStatusKey struct{}
@@ -185,9 +186,9 @@ func renderValue(w http.ResponseWriter, r *http.Request, v Renderer) error {
 		return nil
 	}
 
-	for i := range value.NumField() {
+	for _, i := range cachedImplementingFieldIndexes(&rendererChildFieldIndexes, value.Type(), rendererType) {
 		field := value.Field(i)
-		if !field.CanInterface() || !field.Type().Implements(rendererType) || isNil(field) {
+		if isNil(field) {
 			continue
 		}
 		child := field.Interface().(Renderer)
@@ -213,9 +214,9 @@ func bindValue(r *http.Request, v Binder) error {
 		return nil
 	}
 
-	for i := range value.NumField() {
+	for _, i := range cachedImplementingFieldIndexes(&binderChildFieldIndexes, value.Type(), binderType) {
 		field := value.Field(i)
-		if !field.CanInterface() || !field.Type().Implements(binderType) || isNil(field) {
+		if isNil(field) {
 			continue
 		}
 		child := field.Interface().(Binder)
@@ -236,6 +237,34 @@ func isNil(value reflect.Value) bool {
 	default:
 		return false
 	}
+}
+
+func cachedImplementingFieldIndexes(cache *sync.Map, typ reflect.Type, iface reflect.Type) []int {
+	key := implementingFieldIndexCacheKey{typ: typ, iface: iface}
+	if indexes, ok := cache.Load(key); ok {
+		return indexes.([]int)
+	}
+
+	indexes := implementingFieldIndexes(typ, iface)
+	actual, _ := cache.LoadOrStore(key, indexes)
+	return actual.([]int)
+}
+
+type implementingFieldIndexCacheKey struct {
+	typ   reflect.Type
+	iface reflect.Type
+}
+
+func implementingFieldIndexes(typ reflect.Type, iface reflect.Type) []int {
+	var indexes []int
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		if !field.IsExported() || !field.Type.Implements(iface) {
+			continue
+		}
+		indexes = append(indexes, i)
+	}
+	return indexes
 }
 
 type contentType int
@@ -298,6 +327,8 @@ func asciiEqualFold(s, t string) bool {
 }
 
 var (
-	rendererType = reflect.TypeOf(new(Renderer)).Elem()
-	binderType   = reflect.TypeOf(new(Binder)).Elem()
+	rendererType              = reflect.TypeOf(new(Renderer)).Elem()
+	binderType                = reflect.TypeOf(new(Binder)).Elem()
+	rendererChildFieldIndexes sync.Map
+	binderChildFieldIndexes   sync.Map
 )

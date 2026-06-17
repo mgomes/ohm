@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -206,6 +208,34 @@ func TestRequestRenderRunsNestedRenderersAndUsesStatus(t *testing.T) {
 	}
 	if got.Child.Message != "child" {
 		t.Errorf("Request.Render(payload).Child.Message = %q, want %q", got.Child.Message, "child")
+	}
+}
+
+func TestCachedImplementingFieldIndexesCachesExportedImplementers(t *testing.T) {
+	type payload struct {
+		Name   string
+		Child  *renderChild
+		Nested Renderer
+		hidden *renderChild
+	}
+
+	var cache sync.Map
+	typ := reflect.TypeOf(payload{})
+
+	got := cachedImplementingFieldIndexes(&cache, typ, rendererType)
+	want := []int{1, 2}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("cachedImplementingFieldIndexes(cache, %v, rendererType) = %v, want %v", typ, got, want)
+	}
+	key := implementingFieldIndexCacheKey{typ: typ, iface: rendererType}
+	if _, ok := cache.Load(key); !ok {
+		t.Fatalf("cachedImplementingFieldIndexes(cache, %v, rendererType) cache hit = false, want true", typ)
+	}
+
+	got = cachedImplementingFieldIndexes(&cache, typ, rendererType)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("cachedImplementingFieldIndexes(cache, %v, rendererType) cached = %v, want %v", typ, got, want)
 	}
 }
 
