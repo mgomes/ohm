@@ -246,6 +246,55 @@ func TestFlightRecorderCoalescesConcurrentSnapshots(t *testing.T) {
 	}
 }
 
+func TestFlightRecorderPreservesCoalescedSnapshotMetadata(t *testing.T) {
+	sink := newMemSink()
+	blocking := &blockingSink{
+		sink:    sink,
+		created: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	recorder := startedRecorder(t, blocking)
+
+	slowCtx := context.WithValue(context.Background(), requestIDKey{}, "slow-req")
+	writerDone := make(chan struct{})
+	go func() {
+		recorder.snapshot(slowCtx, "slow")
+		close(writerDone)
+	}()
+
+	select {
+	case <-blocking.created:
+	case <-time.After(time.Second):
+		t.Fatalf("first snapshot did not reach sink Create")
+	}
+
+	panicCtx := context.WithValue(context.Background(), requestIDKey{}, "panic-req")
+	recorder.snapshot(panicCtx, "panic")
+	lateSlowCtx := context.WithValue(context.Background(), requestIDKey{}, "late-slow-req")
+	recorder.snapshot(lateSlowCtx, "slow")
+
+	close(blocking.release)
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatalf("snapshot writer did not drain coalesced panic")
+	}
+
+	names := sink.names()
+	if len(names) != 2 {
+		t.Fatalf("snapshots = %d, want slow snapshot plus coalesced panic follow-up", len(names))
+	}
+	if !snapshotNameContains(names, "slow-slow-req") {
+		t.Errorf("snapshots = %v, want one named for the slow request", names)
+	}
+	if !snapshotNameContains(names, "panic-panic-req") {
+		t.Errorf("snapshots = %v, want coalesced follow-up named for the panic request", names)
+	}
+	if snapshotNameContains(names, "slow-late-slow-req") {
+		t.Errorf("snapshots = %v, want pending panic metadata to survive later slow trigger", names)
+	}
+}
+
 func TestFlightRecorderDrainsSnapshotsCoalescedDuringFollowUp(t *testing.T) {
 	sink := newMemSink()
 	firstGate := snapshotGate{created: make(chan struct{}), release: make(chan struct{})}
@@ -300,6 +349,15 @@ func TestFlightRecorderDrainsSnapshotsCoalescedDuringFollowUp(t *testing.T) {
 	if got := len(sink.names()); got != 3 {
 		t.Errorf("snapshots = %d, want initial snapshot plus two drained follow-ups", got)
 	}
+}
+
+func snapshotNameContains(names []string, needle string) bool {
+	for _, name := range names {
+		if strings.Contains(name, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 type blockingSink struct {
