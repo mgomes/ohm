@@ -384,6 +384,7 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestClone(t *testing.T) {
 	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
 	request = request.WithContext(ctx)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
 
 	handler.ServeHTTP(response, request)
 
@@ -445,6 +446,7 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestCloneWithDerivedBackgroundCont
 	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
 	request = request.WithContext(ctx)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
 
 	handler.ServeHTTP(response, request)
 
@@ -473,6 +475,7 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRewrittenRequestClone(t *testing.T) {
 	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
 	request = request.WithContext(ctx)
+	request.Body = &statusReadCloser{Reader: strings.NewReader("request body")}
 
 	handler.ServeHTTP(response, request)
 
@@ -491,6 +494,9 @@ func TestSetStatusBeforeHTTPHandlerClearsAmbiguousRequestCloneStatuses(t *testin
 	defer cancel()
 	first := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
 	second := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+	body := &statusReadCloser{Reader: strings.NewReader("request body")}
+	first.Body = body
+	second.Body = body
 
 	SetStatus(first, http.StatusCreated)
 	SetStatus(second, http.StatusAccepted)
@@ -601,6 +607,32 @@ func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossSharedContextRequests(t *tes
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossIdenticalCancellableRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render", nil).WithContext(ctx)
+
+	SetStatus(first, http.StatusCreated)
+
+	secondResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with identical shared-context request) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusOK)
+	}
+
+	firstResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s original shared-context request) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossIdenticalBackgroundRequests(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
@@ -698,6 +730,8 @@ func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableClonedRequests(t *t
 	defer cancel()
 	first := httptest.NewRequest(http.MethodGet, "/render?request=first", nil).WithContext(ctx)
 	second := httptest.NewRequest(http.MethodGet, "/render?request=second", nil).WithContext(ctx)
+	first.Body = &statusReadCloser{Reader: strings.NewReader("first request body")}
+	second.Body = &statusReadCloser{Reader: strings.NewReader("second request body")}
 
 	SetStatus(first, http.StatusCreated)
 	SetStatus(second, http.StatusAccepted)
