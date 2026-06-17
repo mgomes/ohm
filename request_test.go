@@ -304,9 +304,6 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestContextCopy(t *testing.T) {
 	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
 		t.Fatalf("pending response status request entry leaked after handler returned")
 	}
-	if _, ok := pendingResponseStatusByDone.Load(request.Context().Done()); ok {
-		t.Fatalf("pending response status context entry leaked after handler returned")
-	}
 	if _, ok := pendingResponseStatusBySharedKey.Load(pendingResponseStatusSharedKeyFor(request)); ok {
 		t.Fatalf("pending response status shared entry leaked after handler returned")
 	}
@@ -344,6 +341,47 @@ func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestContextCopy(t *testi
 	}
 	if _, ok := pendingResponseStatusBySharedKey.Load(sharedKey); ok {
 		t.Fatalf("pending response status shared entry leaked after handler returned")
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableContextRequests(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := httptest.NewRequest(http.MethodGet, "/render?request=first", nil).WithContext(ctx)
+	second := httptest.NewRequest(http.MethodGet, "/render?request=second", nil).WithContext(ctx)
+
+	SetStatus(first, http.StatusCreated)
+	SetStatus(second, http.StatusAccepted)
+
+	firstResponse := httptest.NewRecorder()
+	firstCtx := context.WithValue(first.Context(), statusContextKey{}, "first")
+	app.HTTPHandler().ServeHTTP(firstResponse, first.WithContext(firstCtx))
+	if firstResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", first.Method, first.URL.String(), firstResponse.Code, http.StatusCreated)
+	}
+
+	secondResponse := httptest.NewRecorder()
+	secondCtx := context.WithValue(second.Context(), statusContextKey{}, "second")
+	app.HTTPHandler().ServeHTTP(secondResponse, second.WithContext(secondCtx))
+	if secondResponse.Code != http.StatusAccepted {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s with shared context) status = %d, want %d", second.Method, second.URL.String(), secondResponse.Code, http.StatusAccepted)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(first); ok {
+		t.Fatalf("pending response status request entry leaked for first request")
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(second); ok {
+		t.Fatalf("pending response status request entry leaked for second request")
+	}
+	if _, ok := pendingResponseStatusBySharedKey.Load(pendingResponseStatusSharedKeyFor(first)); ok {
+		t.Fatalf("pending response status shared entry leaked for first request")
+	}
+	if _, ok := pendingResponseStatusBySharedKey.Load(pendingResponseStatusSharedKeyFor(second)); ok {
+		t.Fatalf("pending response status shared entry leaked for second request")
 	}
 }
 

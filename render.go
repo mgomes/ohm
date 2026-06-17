@@ -24,7 +24,6 @@ type responseStatusState struct {
 type pendingResponseStatus struct {
 	code      atomic.Int32
 	request   *http.Request
-	done      <-chan struct{}
 	sharedKey pendingResponseStatusSharedKey
 
 	stopCleanup func() bool
@@ -32,8 +31,6 @@ type pendingResponseStatus struct {
 
 var (
 	pendingResponseStatusByRequest sync.Map
-	// Preserve pre-handler SetStatus calls across request copies that keep the same cancellation channel.
-	pendingResponseStatusByDone sync.Map
 	// Preserve pre-handler SetStatus calls across Request.WithContext shallow copies with background contexts.
 	pendingResponseStatusBySharedKey sync.Map
 )
@@ -251,10 +248,9 @@ func rememberPendingResponseStatus(r *http.Request, status int32) {
 
 	pending := &pendingResponseStatus{}
 	pending.request = r
-	pending.done = r.Context().Done()
 	pending.sharedKey = pendingResponseStatusSharedKeyFor(r)
 	pending.code.Store(status)
-	if pending.done != nil {
+	if r.Context().Done() != nil {
 		pending.stopCleanup = context.AfterFunc(r.Context(), func() {
 			deletePendingResponseStatus(pending)
 		})
@@ -263,16 +259,6 @@ func rememberPendingResponseStatus(r *http.Request, status int32) {
 	actual, loaded := pendingResponseStatusByRequest.LoadOrStore(r, pending)
 	if loaded {
 		stopPendingResponseStatusCleanup(pending)
-		actual.(*pendingResponseStatus).code.Store(status)
-		return
-	}
-	if pending.done == nil {
-		storePendingResponseStatusBySharedKey(pending, status)
-		return
-	}
-	actual, loaded = pendingResponseStatusByDone.LoadOrStore(pending.done, pending)
-	if loaded {
-		deletePendingResponseStatus(pending)
 		actual.(*pendingResponseStatus).code.Store(status)
 		return
 	}
@@ -294,12 +280,6 @@ func lookupPendingResponseStatus(r *http.Request) (*pendingResponseStatus, bool)
 	}
 	if value, ok := pendingResponseStatusByRequest.Load(r); ok {
 		return value.(*pendingResponseStatus), true
-	}
-	done := r.Context().Done()
-	if done != nil {
-		if value, ok := pendingResponseStatusByDone.Load(done); ok {
-			return value.(*pendingResponseStatus), true
-		}
 	}
 	sharedKey := pendingResponseStatusSharedKeyFor(r)
 	if sharedKey.isZero() {
@@ -330,9 +310,6 @@ func deletePendingResponseStatus(pending *pendingResponseStatus) {
 	}
 	if pending.request != nil {
 		pendingResponseStatusByRequest.CompareAndDelete(pending.request, pending)
-	}
-	if pending.done != nil {
-		pendingResponseStatusByDone.CompareAndDelete(pending.done, pending)
 	}
 	if !pending.sharedKey.isZero() {
 		pendingResponseStatusBySharedKey.CompareAndDelete(pending.sharedKey, pending)
