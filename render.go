@@ -22,9 +22,11 @@ type responseStatusState struct {
 }
 
 type pendingResponseStatus struct {
-	code        atomic.Int32
-	request     *http.Request
-	done        <-chan struct{}
+	code      atomic.Int32
+	request   *http.Request
+	done      <-chan struct{}
+	sharedKey pendingResponseStatusSharedKey
+
 	stopCleanup func() bool
 }
 
@@ -32,7 +34,11 @@ var (
 	pendingResponseStatusByRequest sync.Map
 	// Preserve pre-handler SetStatus calls across request copies that keep the same cancellation channel.
 	pendingResponseStatusByDone sync.Map
+	// Preserve pre-handler SetStatus calls across Request.WithContext shallow copies with background contexts.
+	pendingResponseStatusBySharedKey sync.Map
 )
+
+type pendingResponseStatusSharedKey uintptr
 
 func withResponseStatus(r *http.Request) *http.Request {
 	if r == nil {
@@ -228,6 +234,7 @@ func rememberPendingResponseStatus(r *http.Request, status int32) {
 	pending := &pendingResponseStatus{}
 	pending.request = r
 	pending.done = r.Context().Done()
+	pending.sharedKey = pendingResponseStatusSharedKeyFor(r)
 	pending.code.Store(status)
 	if pending.done != nil {
 		pending.stopCleanup = context.AfterFunc(r.Context(), func() {
@@ -242,14 +249,16 @@ func rememberPendingResponseStatus(r *http.Request, status int32) {
 		return
 	}
 	if pending.done == nil {
+		storePendingResponseStatusBySharedKey(pending, status)
 		return
 	}
-
 	actual, loaded = pendingResponseStatusByDone.LoadOrStore(pending.done, pending)
 	if loaded {
 		deletePendingResponseStatus(pending)
 		actual.(*pendingResponseStatus).code.Store(status)
+		return
 	}
+	storePendingResponseStatusBySharedKey(pending, status)
 }
 
 func takePendingResponseStatus(r *http.Request) (int32, bool) {
@@ -269,10 +278,16 @@ func lookupPendingResponseStatus(r *http.Request) (*pendingResponseStatus, bool)
 		return value.(*pendingResponseStatus), true
 	}
 	done := r.Context().Done()
-	if done == nil {
+	if done != nil {
+		if value, ok := pendingResponseStatusByDone.Load(done); ok {
+			return value.(*pendingResponseStatus), true
+		}
+	}
+	sharedKey := pendingResponseStatusSharedKeyFor(r)
+	if sharedKey == 0 {
 		return nil, false
 	}
-	if value, ok := pendingResponseStatusByDone.Load(done); ok {
+	if value, ok := pendingResponseStatusBySharedKey.Load(sharedKey); ok {
 		return value.(*pendingResponseStatus), true
 	}
 	return nil, false
@@ -301,7 +316,28 @@ func deletePendingResponseStatus(pending *pendingResponseStatus) {
 	if pending.done != nil {
 		pendingResponseStatusByDone.CompareAndDelete(pending.done, pending)
 	}
+	if pending.sharedKey != 0 {
+		pendingResponseStatusBySharedKey.CompareAndDelete(pending.sharedKey, pending)
+	}
 	stopPendingResponseStatusCleanup(pending)
+}
+
+func storePendingResponseStatusBySharedKey(pending *pendingResponseStatus, status int32) {
+	if pending.sharedKey == 0 {
+		return
+	}
+	actual, loaded := pendingResponseStatusBySharedKey.LoadOrStore(pending.sharedKey, pending)
+	if loaded {
+		deletePendingResponseStatus(pending)
+		actual.(*pendingResponseStatus).code.Store(status)
+	}
+}
+
+func pendingResponseStatusSharedKeyFor(r *http.Request) pendingResponseStatusSharedKey {
+	if r == nil || r.Header == nil {
+		return 0
+	}
+	return pendingResponseStatusSharedKey(reflect.ValueOf(r.Header).Pointer())
 }
 
 func drainBody(r io.Reader) {

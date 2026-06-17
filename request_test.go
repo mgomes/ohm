@@ -307,6 +307,43 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestContextCopy(t *testing.T) {
 	if _, ok := pendingResponseStatusByDone.Load(request.Context().Done()); ok {
 		t.Fatalf("pending response status context entry leaked after handler returned")
 	}
+	if _, ok := pendingResponseStatusBySharedKey.Load(pendingResponseStatusSharedKeyFor(request)); ok {
+		t.Fatalf("pending response status shared entry leaked after handler returned")
+	}
+}
+
+func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestContextCopy(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		ctx := context.WithValue(r.Context(), statusContextKey{}, "copied")
+		app.HTTPHandler().ServeHTTP(w, r.WithContext(ctx))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	if request.Context().Done() != nil {
+		t.Fatalf("httptest.NewRequest(%s, %q, nil).Context().Done() is non-nil, want nil", http.MethodGet, "/render")
+	}
+	sharedKey := pendingResponseStatusSharedKeyFor(request)
+	if sharedKey == 0 {
+		t.Fatalf("pendingResponseStatusSharedKeyFor(request) = 0, want non-zero")
+	}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s with copied background context) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if _, ok := pendingResponseStatusByRequest.Load(request); ok {
+		t.Fatalf("pending response status request entry leaked after handler returned")
+	}
+	if _, ok := pendingResponseStatusBySharedKey.Load(sharedKey); ok {
+		t.Fatalf("pending response status shared entry leaked after handler returned")
+	}
 }
 
 func TestSetStatusDoesNotRaceWithRequestContextReaders(t *testing.T) {
