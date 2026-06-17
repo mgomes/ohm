@@ -256,6 +256,31 @@ func TestSetStatusFromMiddlewareAppliesToRender(t *testing.T) {
 	}
 }
 
+func TestSetStatusFromOuterMiddlewareAppliesToMountedAppRender(t *testing.T) {
+	inner := New()
+	inner.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	outer := New()
+	outer.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			SetStatus(r, http.StatusAccepted)
+			next.ServeHTTP(w, r)
+		})
+	})
+	outer.GetHTTP("/render", inner.HTTPHandler())
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+
+	outer.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("mounted App.HTTPHandler().ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerAppliesToRender(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {

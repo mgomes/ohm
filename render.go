@@ -66,6 +66,9 @@ func withNewResponseStatus(r *http.Request) *http.Request {
 		return nil
 	}
 	state := &responseStatusState{}
+	if existing, ok := responseStatusStateFromRequest(r); ok {
+		state.code.Store(existing.code.Load())
+	}
 	if status, ok := takePendingResponseStatus(r); ok {
 		state.code.Store(status)
 	}
