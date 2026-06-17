@@ -709,7 +709,7 @@ func TestSetStatusBeforeHTTPHandlerDoesNotMatchNoBodyDetachedBackgroundClone(t *
 	}
 }
 
-func TestSetStatusBeforeHTTPHandlerDoesNotMatchNoBodyRequestClone(t *testing.T) {
+func TestSetStatusBeforeHTTPHandlerCannotSafelyMatchNoBodyRequestClone(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
 		return req.Render(&statusPayload{})
