@@ -94,10 +94,11 @@ func Recoverer(logger *slog.Logger) Middleware {
 }
 
 func ensureRequestID(w http.ResponseWriter, r *http.Request) (*http.Request, string) {
-	requestID, _ := RequestID(r.Context())
-	if requestID == "" {
-		requestID = r.Header.Get(RequestIDHeader)
+	if requestID, ok := RequestID(r.Context()); ok && requestID != "" {
+		return r, requestID
 	}
+
+	requestID := r.Header.Get(RequestIDHeader)
 	if requestID == "" {
 		requestID = newRequestID()
 	}
