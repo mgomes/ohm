@@ -24,8 +24,8 @@ The `.env` parser will support:
 - `KEY=value` pairs.
 - Blank lines.
 - Comments beginning with `#`.
-- Single-quoted and double-quoted values.
-- Escaped newlines inside quoted values.
+- Single-quoted literal values.
+- Double-quoted values with escaped newlines, carriage returns, and tabs.
 
 The parser will not initially support shell execution, command substitution,
 or implicit environment variable expansion.
