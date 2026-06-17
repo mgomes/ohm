@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted on 2026-06-05
 
 ## Context
 
@@ -163,10 +163,11 @@ record. Application logging code is unchanged, and the existing scrubbing policy
 ### Flight recorder
 
 Ohm owns a single `runtime/trace.FlightRecorder`, started and stopped with the
-server and opt-in. Snapshots are triggered only by rare, high-value events:
+server and opt-in. Snapshots are triggered only by rare, high-value events in
+the dedicated `FlightRecording` middleware:
 
-- Recovered panics, in the `Recoverer` middleware.
-- Slow requests above a configurable latency threshold, in `RequestLogger`.
+- Panics observed before `Recoverer` renders the response.
+- Slow requests above a configurable latency threshold.
 
 Each snapshot is written to a sink (generated applications default to
 `tmp/traces`), named by the correlation id, and the same id is also stamped into
