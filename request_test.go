@@ -401,6 +401,37 @@ func TestSetStatusBeforeHTTPHandlerSurvivesRequestClone(t *testing.T) {
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerSurvivesRequestCloneWithComparableBody(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetStatus(r, http.StatusCreated)
+		app.HTTPHandler().ServeHTTP(w, r.Clone(r.Context()))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/render", strings.NewReader("request body"))
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	if pendingResponseStatusCloneRequestKeyFor(request).body == nil {
+		t.Fatalf("pendingResponseStatusCloneRequestKeyFor(%s %s) body = nil, want comparable body identity", request.Method, request.URL.Path)
+	}
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("wrapped App.HTTPHandler().ServeHTTP(%s %s cloned request with comparable body) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	for _, key := range pendingResponseStatusCloneKeysFor(request) {
+		if _, ok := pendingResponseStatusByCloneKey.Load(key); ok {
+			t.Fatalf("pending response status clone entry leaked after comparable-body cloned request returned")
+		}
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerSurvivesBackgroundRequestCloneWithDerivedContext(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {

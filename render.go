@@ -56,7 +56,7 @@ type pendingResponseStatusSharedKey struct {
 type pendingResponseStatusRewrittenCopyKey struct {
 	method     string
 	header     uintptr
-	body       uintptr
+	body       any
 	host       string
 	requestURI string
 }
@@ -66,7 +66,7 @@ type pendingResponseStatusCloneRequestKey struct {
 	url           string
 	host          string
 	requestURI    string
-	body          uintptr
+	body          any
 	contentLength int64
 }
 
@@ -557,7 +557,7 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 	for _, requestKey := range pendingResponseStatusCloneRequestKeysFor(r) {
 		// Deep no-body clones cannot be matched safely: they are indistinguishable
 		// from unrelated requests that reuse the same context, method, URL, and host.
-		if requestKey.body == 0 {
+		if requestKey.body == nil {
 			continue
 		}
 		if contextKey, ok := comparableContextKey(r.Context()); ok {
@@ -584,14 +584,14 @@ func pendingResponseStatusRewrittenCopyKeyFor(r *http.Request) pendingResponseSt
 	return pendingResponseStatusRewrittenCopyKey{
 		method:     r.Method,
 		header:     pointerIdentity(r.Header),
-		body:       pointerIdentity(r.Body),
+		body:       bodyIdentity(r.Body),
 		host:       r.Host,
 		requestURI: r.RequestURI,
 	}
 }
 
 func (key pendingResponseStatusRewrittenCopyKey) isZero() bool {
-	return key.requestURI == "" || (key.header == 0 && key.body == 0)
+	return key.requestURI == "" || (key.header == 0 && key.body == nil)
 }
 
 func pendingResponseStatusCloneRequestKeysFor(r *http.Request) []pendingResponseStatusCloneRequestKey {
@@ -620,13 +620,13 @@ func pendingResponseStatusCloneRequestKeyFor(r *http.Request) pendingResponseSta
 		url:           url,
 		host:          r.Host,
 		requestURI:    r.RequestURI,
-		body:          pointerIdentity(r.Body),
+		body:          bodyIdentity(r.Body),
 		contentLength: r.ContentLength,
 	}
 }
 
 func (key pendingResponseStatusCloneRequestKey) isZero() bool {
-	return key.url == "" && key.requestURI == "" && key.body == 0
+	return key.url == "" && key.requestURI == "" && key.body == nil
 }
 
 func comparableContextKey(ctx context.Context) (any, bool) {
@@ -651,6 +651,23 @@ func pointerIdentity(v any) uintptr {
 	default:
 		return 0
 	}
+}
+
+func bodyIdentity(v any) any {
+	if v == nil {
+		return nil
+	}
+	if reflect.TypeOf(v) == reflect.TypeOf(http.NoBody) {
+		return nil
+	}
+	if pointer := pointerIdentity(v); pointer != 0 {
+		return pointer
+	}
+	value := reflect.ValueOf(v)
+	if !value.IsValid() || !value.Comparable() {
+		return nil
+	}
+	return v
 }
 
 func drainBody(r io.Reader) {
