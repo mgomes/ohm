@@ -19,7 +19,9 @@ import (
 type responseStatusKey struct{}
 
 type responseStatusState struct {
-	code atomic.Int32
+	code           atomic.Int32
+	handlerStarted atomic.Bool
+	seedable       atomic.Bool
 }
 
 type pendingResponseStatus struct {
@@ -83,6 +85,7 @@ func withResponseStatus(r *http.Request) *http.Request {
 	state := &responseStatusState{}
 	if status, ok := takePendingResponseStatus(r); ok {
 		state.code.Store(status)
+		state.seedable.Store(true)
 	}
 	return r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, state))
 }
@@ -93,10 +96,14 @@ func withNewResponseStatus(r *http.Request) *http.Request {
 	}
 	state := &responseStatusState{}
 	if existing, ok := responseStatusStateFromRequest(r); ok {
-		state.code.Store(existing.code.Load())
+		if existing.seedable.Load() {
+			state.code.Store(existing.code.Load())
+			state.seedable.Store(true)
+		}
 	}
 	if status, ok := takePendingResponseStatus(r); ok {
 		state.code.Store(status)
+		state.seedable.Store(true)
 	}
 	return r.WithContext(context.WithValue(r.Context(), responseStatusKey{}, state))
 }
@@ -109,6 +116,7 @@ func SetStatus(r *http.Request, status int) {
 		return
 	}
 	state.code.Store(int32(status))
+	state.seedable.Store(!state.handlerStarted.Load())
 }
 
 // RenderHTML renders content as an HTML response with status.
@@ -264,6 +272,13 @@ func responseStatusStateFromRequest(r *http.Request) (*responseStatusState, bool
 	}
 	state, ok := r.Context().Value(responseStatusKey{}).(*responseStatusState)
 	return state, ok
+}
+
+func markResponseStatusHandlerStarted(r *http.Request) {
+	state, ok := responseStatusStateFromRequest(r)
+	if ok {
+		state.handlerStarted.Store(true)
+	}
 }
 
 func rememberPendingResponseStatus(r *http.Request, status int32) {

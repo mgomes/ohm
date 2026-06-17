@@ -611,6 +611,36 @@ func TestSetStatusFromInternalSubrequestDoesNotAffectOuterRender(t *testing.T) {
 	}
 }
 
+func TestSetStatusFromOuterHandlerDoesNotSeedInternalSubrequest(t *testing.T) {
+	app := New()
+	app.Get("/inner", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+	app.Get("/outer", func(req *Request) error {
+		SetStatus(req.HTTPRequest(), http.StatusAccepted)
+		innerRequest := req.HTTPRequest().Clone(req.HTTPRequest().Context())
+		innerRequest.URL.Path = "/inner"
+		innerRequest.RequestURI = "/inner"
+		innerResponse := httptest.NewRecorder()
+
+		app.ServeHTTP(innerResponse, innerRequest)
+		if innerResponse.Code != http.StatusOK {
+			t.Errorf("App.ServeHTTP(%s %s cloned after outer SetStatus) status = %d, want %d", innerRequest.Method, innerRequest.URL.Path, innerResponse.Code, http.StatusOK)
+		}
+
+		return req.Render(&statusPayload{})
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/outer", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusAccepted)
+	}
+}
+
 func TestSetStatusDoesNotRaceWithRequestContextReaders(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {
