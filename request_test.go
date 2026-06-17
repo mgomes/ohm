@@ -623,6 +623,28 @@ func TestSetStatusBeforeHTTPHandlerDoesNotLeakAcrossIdenticalBackgroundRequests(
 	}
 }
 
+func TestSetStatusBeforeHTTPHandlerDoesNotMatchNoBodyDetachedBackgroundClone(t *testing.T) {
+	app := New()
+	app.Get("/render", func(req *Request) error {
+		return req.Render(&statusPayload{})
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	SetStatus(request, http.StatusCreated)
+
+	cloneResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(cloneResponse, request.Clone(context.WithoutCancel(request.Context())))
+	if cloneResponse.Code != http.StatusOK {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s no-body detached clone) status = %d, want %d", request.Method, request.URL.String(), cloneResponse.Code, http.StatusOK)
+	}
+
+	originalResponse := httptest.NewRecorder()
+	app.HTTPHandler().ServeHTTP(originalResponse, request)
+	if originalResponse.Code != http.StatusCreated {
+		t.Fatalf("App.HTTPHandler().ServeHTTP(%s %s original background request) status = %d, want %d", request.Method, request.URL.String(), originalResponse.Code, http.StatusCreated)
+	}
+}
+
 func TestSetStatusBeforeHTTPHandlerSeparatesSharedCancellableContextRequests(t *testing.T) {
 	app := New()
 	app.Get("/render", func(req *Request) error {

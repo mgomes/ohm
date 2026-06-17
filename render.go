@@ -556,6 +556,7 @@ func pendingResponseStatusCloneKeysFor(r *http.Request) []any {
 				request: requestKey,
 			})
 		}
+		// Detached background clones need a clone-stable discriminator; shape alone can match unrelated requests.
 		if requestKey.body != 0 {
 			keys = append(keys, pendingResponseStatusBodyCloneKey{request: requestKey})
 		}
