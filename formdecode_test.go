@@ -3,6 +3,7 @@ package ohm
 import (
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -323,4 +324,80 @@ func TestDecodeFormRejectsOversizedRequestBody(t *testing.T) {
 	if err == nil {
 		t.Fatalf("decodeForm(request with %d byte body, payload) error = nil, want error", maxFormBodyBytes+1)
 	}
+}
+
+func BenchmarkDecodeFormValuesNestedIndexedForm(b *testing.B) {
+	values := benchmarkFormValues()
+
+	for b.Loop() {
+		var payload benchmarkFormPayload
+		if err := decodeFormValues(values, &payload); err != nil {
+			b.Fatalf("decodeFormValues(benchmark values, payload) error = %v, want nil", err)
+		}
+	}
+}
+
+type benchmarkFormPayload struct {
+	Title       string              `form:"title"`
+	Published   bool                `form:"published"`
+	Count       int                 `form:"count"`
+	Page        *int                `form:"page"`
+	Author      author              `form:"author"`
+	Preferences map[string]string   `form:"prefs"`
+	Tags        []string            `form:"tags"`
+	Items       []benchmarkFormItem `form:"items"`
+	Matrix      [][]string          `form:"matrix"`
+	Token       formToken           `form:"token"`
+	Lookup      map[string]string   `form:"lookup"`
+}
+
+type benchmarkFormItem struct {
+	Name     string                `form:"name"`
+	Quantity int                   `form:"quantity"`
+	Options  []benchmarkFormOption `form:"options"`
+}
+
+type benchmarkFormOption struct {
+	Label string `form:"label"`
+	Value string `form:"value"`
+}
+
+func benchmarkFormValues() url.Values {
+	values := url.Values{
+		"title":       []string{"hello"},
+		"published":   []string{"true"},
+		"count":       []string{"12"},
+		"page":        []string{"3"},
+		"author.name": []string{"ada"},
+		"prefs.theme": []string{"dark"},
+		"prefs.locale": []string{
+			"en-US",
+		},
+		"prefs.timezone": []string{"UTC"},
+		"token":          []string{"csrf"},
+		"lookup.a":       []string{"alpha"},
+		"lookup.b":       []string{"beta"},
+		"lookup.c":       []string{"gamma"},
+		"lookup.d":       []string{"delta"},
+	}
+
+	for i := range 6 {
+		values.Set("tags."+strconv.Itoa(i), "tag-"+strconv.Itoa(i))
+	}
+	for i := range 4 {
+		itemPrefix := "items." + strconv.Itoa(i)
+		values.Set(itemPrefix+".name", "item-"+strconv.Itoa(i))
+		values.Set(itemPrefix+".quantity", strconv.Itoa(i+1))
+		for j := range 2 {
+			optionPrefix := itemPrefix + ".options." + strconv.Itoa(j)
+			values.Set(optionPrefix+".label", "option-"+strconv.Itoa(j))
+			values.Set(optionPrefix+".value", strconv.Itoa((i+1)*(j+1)))
+		}
+	}
+	for row := range 2 {
+		for col := range 4 {
+			values.Set("matrix."+strconv.Itoa(row)+"."+strconv.Itoa(col), "cell")
+		}
+	}
+	return values
 }
