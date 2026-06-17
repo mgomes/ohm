@@ -188,6 +188,43 @@ func TestRequestRenderRunsNestedRenderersAndUsesStatus(t *testing.T) {
 	}
 }
 
+func TestAcceptedContentTypeUsesFirstAcceptFieldWithoutAllocating(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/render", nil)
+	request.Header.Set("Accept", "application/xml; charset=utf-8, application/json")
+
+	if got := acceptedContentType(request); got != contentTypeXML {
+		t.Fatalf("acceptedContentType(request) = %v, want %v", got, contentTypeXML)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_ = acceptedContentType(request)
+	})
+	if allocs != 0 {
+		t.Errorf("acceptedContentType(request) allocations = %v, want 0", allocs)
+	}
+}
+
+func TestParseContentTypeUsesMediaTypeBeforeParameters(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want contentType
+	}{
+		{name: "json parameters", raw: "APPLICATION/JSON; charset=utf-8", want: contentTypeJSON},
+		{name: "xml malformed parameter", raw: "application/xml; charset", want: contentTypeXML},
+		{name: "xhtml parameters", raw: "application/xhtml+xml; profile=compact", want: contentTypeHTML},
+		{name: "form parameters", raw: "application/x-www-form-urlencoded; charset=UTF-8", want: contentTypeForm},
+		{name: "unknown", raw: "application/octet-stream; charset=utf-8", want: contentTypeUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseContentType(tt.raw); got != tt.want {
+				t.Errorf("parseContentType(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRouteHelpersExposeMatchedRoute(t *testing.T) {
 	app := New()
 	app.Get("/posts/{id}", func(req *Request) error {
