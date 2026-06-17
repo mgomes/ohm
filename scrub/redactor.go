@@ -563,8 +563,18 @@ func (r *Redactor) addKey(key string) {
 
 	normalized := normalizeKey(key)
 	if normalized != "" {
+		if _, exists := r.keys[normalized]; exists {
+			return
+		}
 		r.keys[normalized] = struct{}{}
+		r.clearSensitiveKeyCache()
 	}
+}
+
+func (r *Redactor) clearSensitiveKeyCache() {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	clear(r.sensitiveKeyCache)
 }
 
 func (r *Redactor) keySet() map[string]struct{} {

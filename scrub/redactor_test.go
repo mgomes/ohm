@@ -141,6 +141,24 @@ func TestSensitiveKeyMatchesCommonStyles(t *testing.T) {
 	}
 }
 
+func TestWithKeysInvalidatesSensitiveKeyCache(t *testing.T) {
+	redactor := New(
+		func(redactor *Redactor) {
+			if redactor.SensitiveKey("trace_id") {
+				t.Errorf("Redactor.SensitiveKey(%q) = true before WithKeys, want false", "trace_id")
+			}
+		},
+		WithKeys("trace_id"),
+	)
+
+	if !redactor.SensitiveKey("trace_id") {
+		t.Errorf("Redactor.SensitiveKey(%q) = false after WithKeys, want true", "trace_id")
+	}
+	if got := redactor.Any("trace_id", "abc123"); got != defaultReplacement {
+		t.Errorf("Redactor.Any(%q, %q) = %v, want %v", "trace_id", "abc123", got, defaultReplacement)
+	}
+}
+
 func FuzzSensitiveKeyRedactsStrings(f *testing.F) {
 	for _, seed := range []struct {
 		key   string
