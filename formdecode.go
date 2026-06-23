@@ -21,8 +21,9 @@ var (
 )
 
 const (
-	maxFormBodyBytes       int64 = 10 << 20
+	maxFormBodyBytes             = DefaultRequestBodyLimit
 	maxFormIndexedElements       = 10_000
+	maxRequestBodyLimit    int64 = int64(^uint64(0) >> 1)
 )
 
 type formTargetError struct {
@@ -42,7 +43,7 @@ func (e *formTargetError) Unwrap() error {
 }
 
 func decodeForm(r *http.Request, v any) error {
-	body, err := readFormBody(r.Body, maxFormBodyBytes)
+	body, err := readRequestBody(r.Body, requestBodyLimit(r), "form")
 	if err != nil {
 		return fmt.Errorf("read form body: %w", err)
 	}
@@ -54,13 +55,23 @@ func decodeForm(r *http.Request, v any) error {
 	return decodeFormValues(values, v)
 }
 
-func readFormBody(body io.Reader, limit int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+func readRequestBody(body io.Reader, limit int64, kind string) ([]byte, error) {
+	if body == nil {
+		return nil, io.EOF
+	}
+	if limit < 0 {
+		limit = DefaultRequestBodyLimit
+	}
+	readLimit := limit + 1
+	if limit == maxRequestBodyLimit {
+		readLimit = limit
+	}
+	data, err := io.ReadAll(io.LimitReader(body, readLimit))
 	if err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > limit {
-		return nil, NewHTTPError(http.StatusRequestEntityTooLarge, "", fmt.Errorf("form body exceeds %d byte limit", limit))
+		return nil, NewHTTPError(http.StatusRequestEntityTooLarge, "", fmt.Errorf("%s request body exceeds %d byte limit", kind, limit))
 	}
 	return data, nil
 }

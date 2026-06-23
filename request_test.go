@@ -184,6 +184,48 @@ func TestRequestDecodeRejectsOversizedFormBodyAsClientError(t *testing.T) {
 	}
 }
 
+func TestRequestDecodeRejectsOversizedStructuredBodiesAsClientError(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+	}{
+		{
+			name:        "JSON",
+			contentType: "application/json",
+			body:        `{"title":"` + strings.Repeat("a", 32) + `"}`,
+		},
+		{
+			name:        "XML",
+			contentType: "application/xml",
+			body:        `<formPayload><Title>` + strings.Repeat("a", 32) + `</Title></formPayload>`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := New(WithRequestBodyLimit(24))
+			app.Post("/posts", func(req *Request) error {
+				var payload formPayload
+				return req.Decode(&payload)
+			})
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", tt.contentType)
+
+			app.ServeHTTP(response, request)
+
+			if response.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("App.ServeHTTP(%s %s, %s) status = %d, want %d", request.Method, request.URL.Path, tt.contentType, response.Code, http.StatusRequestEntityTooLarge)
+			}
+			if got := response.Body.String(); got != http.StatusText(http.StatusRequestEntityTooLarge) {
+				t.Errorf("App.ServeHTTP(%s %s, %s) body = %q, want %q", request.Method, request.URL.Path, tt.contentType, got, http.StatusText(http.StatusRequestEntityTooLarge))
+			}
+		})
+	}
+}
+
 func TestRequestDecodeRejectsMalformedClientInputAsBadRequest(t *testing.T) {
 	tests := []struct {
 		name        string
