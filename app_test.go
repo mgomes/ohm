@@ -749,6 +749,39 @@ func TestAppRawResponseWriterPreservesCustomExtensions(t *testing.T) {
 	}
 }
 
+func TestAppHeadRawResponseWriterPreservesCustomExtensions(t *testing.T) {
+	var gotCustom bool
+	app := New()
+	app.Get("/custom", func(req *Request) error {
+		custom, ok := req.RawResponseWriter().(customResponseWriterExtension)
+		gotCustom = ok
+		if !ok {
+			return errors.New("custom response writer extension missing")
+		}
+
+		req.PlainText(http.StatusOK, custom.CustomResponseWriterValue())
+		return nil
+	})
+
+	res := &customExtensionRecorder{value: "custom"}
+	request := httptest.NewRequest(http.MethodHead, "/custom", nil)
+
+	app.ServeHTTP(res, request)
+
+	if !gotCustom {
+		t.Errorf("Request.RawResponseWriter() custom extension = false, want true")
+	}
+	if res.status != http.StatusOK {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusOK)
+	}
+	if got := res.header.Get("Content-Length"); got != "6" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "6")
+	}
+	if res.body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.body.Len())
+	}
+}
+
 type customResponseWriterExtension interface {
 	CustomResponseWriterValue() string
 }

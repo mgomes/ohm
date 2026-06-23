@@ -1,8 +1,10 @@
 package ohm
 
 import (
+	"context"
 	"io"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -157,6 +159,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		writer, state := newHeadResponseWriter(w)
 		defer state.finish()
+		r = withHeadResponseWriter(r, writer, w)
 		a.router.ServeHTTP(writer, r)
 		return
 	}
@@ -318,10 +321,11 @@ func staticPrefix(pattern string) string {
 
 func (a *App) adapt(handler Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawW := rawResponseWriter(w, r)
 		tracked, state := trackResponse(w)
 		r = withResponseStatus(r)
 		markResponseStatusHandlerStarted(r)
-		req := newRequestWithRawResponseWriter(tracked, w, r)
+		req := newRequestWithRawResponseWriter(tracked, rawW, r)
 		if err := handler(req); err != nil {
 			recordHandlerError(r.Context(), err)
 			if state.committed() {
@@ -330,6 +334,41 @@ func (a *App) adapt(handler Handler) http.Handler {
 			a.errorHandler(req, err)
 		}
 	})
+}
+
+type headResponseWriterContextKey struct{}
+
+type headResponseWriterContext struct {
+	writer http.ResponseWriter
+	raw    http.ResponseWriter
+}
+
+func withHeadResponseWriter(r *http.Request, writer http.ResponseWriter, raw http.ResponseWriter) *http.Request {
+	ctx := context.WithValue(r.Context(), headResponseWriterContextKey{}, headResponseWriterContext{
+		writer: writer,
+		raw:    raw,
+	})
+	return r.WithContext(ctx)
+}
+
+func rawResponseWriter(w http.ResponseWriter, r *http.Request) http.ResponseWriter {
+	head, ok := r.Context().Value(headResponseWriterContextKey{}).(headResponseWriterContext)
+	if !ok || !sameResponseWriter(w, head.writer) {
+		return w
+	}
+	return head.raw
+}
+
+func sameResponseWriter(a http.ResponseWriter, b http.ResponseWriter) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	aValue := reflect.ValueOf(a)
+	bValue := reflect.ValueOf(b)
+	if !aValue.Type().Comparable() || !bValue.Type().Comparable() {
+		return false
+	}
+	return a == b
 }
 
 type headResponseState struct {
