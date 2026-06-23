@@ -1,10 +1,13 @@
 package ohm
 
 import (
+	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -260,52 +263,197 @@ func (a *App) adapt(handler Handler) http.Handler {
 
 func discardResponseBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(&headResponseWriter{ResponseWriter: w}, r)
+		writer, state := newHeadResponseWriter(w)
+		next.ServeHTTP(writer, r)
+		state.finish()
 	})
 }
 
-type headResponseWriter struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
+type headResponseState struct {
+	writer      http.ResponseWriter
+	writeHeader func(int)
+
+	status         int
+	wroteHeader    bool
+	headerSnapshot http.Header
+	bodyBytes      int64
+	flushed        bool
+	committed      bool
 }
 
-func (w *headResponseWriter) Write(body []byte) (int, error) {
-	if !w.wroteHeader {
-		w.sniffContentType(body)
-		w.WriteHeader(http.StatusOK)
+func newHeadResponseWriter(w http.ResponseWriter) (http.ResponseWriter, *headResponseState) {
+	state := &headResponseState{
+		writer:      w,
+		writeHeader: w.WriteHeader,
 	}
-	if !statusAllowsResponseBody(w.status) {
+	return httpsnoop.Wrap(w, httpsnoop.Hooks{
+		WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
+			state.writeHeader = next
+			return state.WriteHeader
+		},
+		Write: func(httpsnoop.WriteFunc) httpsnoop.WriteFunc {
+			return state.Write
+		},
+		WriteString: func(httpsnoop.WriteStringFunc) httpsnoop.WriteStringFunc {
+			return state.WriteString
+		},
+		ReadFrom: func(httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
+			return state.ReadFrom
+		},
+		Flush: func(next httpsnoop.FlushFunc) httpsnoop.FlushFunc {
+			return func() {
+				state.Flush(next)
+			}
+		},
+		FlushError: func(next httpsnoop.FlushErrorFunc) httpsnoop.FlushErrorFunc {
+			return func() error {
+				return state.FlushError(next)
+			}
+		},
+	}), state
+}
+
+func (s *headResponseState) Header() http.Header {
+	if s.headerSnapshot != nil {
+		return s.headerSnapshot
+	}
+	return s.writer.Header()
+}
+
+func (s *headResponseState) WriteHeader(status int) {
+	if !finalStatus(status) {
+		s.writeHeader(status)
+		return
+	}
+	s.beginFinalResponse(status)
+}
+
+func (s *headResponseState) Write(body []byte) (int, error) {
+	if !s.wroteHeader {
+		s.beginFinalResponse(http.StatusOK)
+	}
+	if !statusAllowsResponseBody(s.status) {
 		return 0, http.ErrBodyNotAllowed
 	}
+	s.recordBody(body)
 	return len(body), nil
 }
 
-func (w *headResponseWriter) WriteHeader(status int) {
-	if w.wroteHeader {
+func (s *headResponseState) WriteString(body string) (int, error) {
+	return s.Write([]byte(body))
+}
+
+func (s *headResponseState) ReadFrom(src io.Reader) (int64, error) {
+	var total int64
+	var buf [32 * 1024]byte
+	for {
+		n, readErr := src.Read(buf[:])
+		if n > 0 {
+			written, writeErr := s.Write(buf[:n])
+			total += int64(written)
+			if writeErr != nil {
+				return total, writeErr
+			}
+			if written != n {
+				return total, io.ErrShortWrite
+			}
+		}
+		if readErr == io.EOF {
+			return total, nil
+		}
+		if readErr != nil {
+			return total, readErr
+		}
+	}
+}
+
+func (s *headResponseState) Flush(next httpsnoop.FlushFunc) {
+	if !s.wroteHeader {
+		s.beginFinalResponse(http.StatusOK)
+	}
+	s.flushed = true
+	s.commit()
+	next()
+}
+
+func (s *headResponseState) FlushError(next httpsnoop.FlushErrorFunc) error {
+	if !s.wroteHeader {
+		s.beginFinalResponse(http.StatusOK)
+	}
+	s.flushed = true
+	s.commit()
+	return next()
+}
+
+func (s *headResponseState) finish() {
+	s.commit()
+}
+
+func (s *headResponseState) beginFinalResponse(status int) {
+	if s.wroteHeader {
 		return
 	}
-	w.status = status
-	w.wroteHeader = true
-	w.ResponseWriter.WriteHeader(status)
+	s.status = status
+	s.wroteHeader = true
+	s.headerSnapshot = s.writer.Header().Clone()
 }
 
-func (w *headResponseWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
+func (s *headResponseState) recordBody(body []byte) {
+	s.bodyBytes += int64(len(body))
+	s.sniffContentType(body)
 }
 
-func (w *headResponseWriter) sniffContentType(body []byte) {
+func (s *headResponseState) sniffContentType(body []byte) {
 	if len(body) == 0 {
 		return
 	}
-	header := w.Header()
+	header := s.Header()
 	if _, ok := header["Content-Type"]; ok {
 		return
 	}
 	if header.Get("Content-Encoding") != "" || header.Get("Transfer-Encoding") != "" {
 		return
 	}
-	w.Header().Set("Content-Type", http.DetectContentType(body))
+	header.Set("Content-Type", http.DetectContentType(body))
+}
+
+func (s *headResponseState) commit() {
+	if s.committed || !s.wroteHeader {
+		return
+	}
+
+	header := s.Header()
+	s.applyBodyHeaders(header)
+	s.restoreHeader(header)
+	s.writeHeader(s.status)
+	s.committed = true
+}
+
+func (s *headResponseState) applyBodyHeaders(header http.Header) {
+	if !statusAllowsResponseBody(s.status) {
+		header.Del("Content-Type")
+		header.Del("Content-Length")
+		header.Del("Transfer-Encoding")
+		return
+	}
+	if s.flushed || s.bodyBytes == 0 {
+		return
+	}
+	if _, ok := header["Content-Length"]; ok {
+		return
+	}
+	if header.Get("Transfer-Encoding") != "" {
+		return
+	}
+	header.Set("Content-Length", strconv.FormatInt(s.bodyBytes, 10))
+}
+
+func (s *headResponseState) restoreHeader(header http.Header) {
+	live := s.writer.Header()
+	clear(live)
+	for name, values := range header {
+		live[name] = slices.Clone(values)
+	}
 }
 
 func statusAllowsResponseBody(status int) bool {

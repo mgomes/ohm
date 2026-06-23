@@ -74,6 +74,9 @@ func TestAppGetHandlesHeadWithoutBody(t *testing.T) {
 	if got := res.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
 		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/plain; charset=utf-8")
 	}
+	if got := res.Header().Get("Content-Length"); got != "5" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "5")
+	}
 	if res.Body.Len() != 0 {
 		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.Body.Len())
 	}
@@ -107,8 +110,43 @@ func TestAppGetHeadFallbackPreservesImplicitWriteHeaders(t *testing.T) {
 	if got := headResponse.Header().Get("Content-Type"); got != wantContentType {
 		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", headRequest.Method, headRequest.URL.Path, got, wantContentType)
 	}
+	if got := headResponse.Header().Get("Content-Length"); got != "18" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", headRequest.Method, headRequest.URL.Path, got, "18")
+	}
 	if headResponse.Body.Len() != 0 {
 		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", headRequest.Method, headRequest.URL.Path, headResponse.Body.Len())
+	}
+}
+
+func TestAppGetHeadFallbackPreservesOptionalWriterInterfaces(t *testing.T) {
+	app := New()
+	app.Get("/copy", func(req *Request) error {
+		if _, ok := req.ResponseWriter().(http.Flusher); !ok {
+			return errors.New("response writer missing http.Flusher")
+		}
+		if _, ok := req.ResponseWriter().(io.ReaderFrom); !ok {
+			return errors.New("response writer missing io.ReaderFrom")
+		}
+		_, err := io.Copy(req.ResponseWriter(), strings.NewReader("hello"))
+		return err
+	})
+
+	res := &optionalInterfaceRecorder{ResponseRecorder: httptest.NewRecorder()}
+	request := httptest.NewRequest(http.MethodHead, "/copy", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Length"); got != "5" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "5")
+	}
+	if res.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.Body.Len())
+	}
+	if res.readFromCalled {
+		t.Errorf("App.ServeHTTP(%s %s) called underlying ReadFrom, want body suppressed by HEAD wrapper", request.Method, request.URL.Path)
 	}
 }
 
@@ -854,6 +892,16 @@ type allowedMethodRoutes struct {
 	matchCalls     int
 	changedContext bool
 	dirtyContext   bool
+}
+
+type optionalInterfaceRecorder struct {
+	*httptest.ResponseRecorder
+	readFromCalled bool
+}
+
+func (r *optionalInterfaceRecorder) ReadFrom(src io.Reader) (int64, error) {
+	r.readFromCalled = true
+	return r.Body.ReadFrom(src)
 }
 
 func (r *allowedMethodRoutes) Routes() []chi.Route {
