@@ -21,6 +21,10 @@ import (
 
 const snapshotVersion = 1
 
+// DefaultExpectedResponseBodyLimit is the default maximum scrubbed response
+// body stored by replay --write-expected-body.
+const DefaultExpectedResponseBodyLimit int64 = 64 << 10
+
 var defaultHeaders = []string{
 	"Accept",
 	"Content-Type",
@@ -166,6 +170,14 @@ type captureOptions struct {
 	principal          *PrincipalRef
 }
 
+// ExpectedResponseOption configures expected response capture.
+type ExpectedResponseOption func(*expectedResponseOptions)
+
+type expectedResponseOptions struct {
+	redactor  *scrub.Redactor
+	bodyLimit int64
+}
+
 // WithHeaders configures the request headers captured into a snapshot.
 func WithHeaders(headers ...string) Option {
 	return func(opts *captureOptions) {
@@ -239,6 +251,26 @@ func WithUncontrolledBoundaries(boundaries ...Boundary) Option {
 func WithPrincipal(ref PrincipalRef) Option {
 	return func(opts *captureOptions) {
 		opts.principal = clonePrincipal(ref)
+	}
+}
+
+// WithExpectedResponseRedactor configures the redactor used when expected
+// response body capture is enabled.
+func WithExpectedResponseRedactor(redactor *scrub.Redactor) ExpectedResponseOption {
+	return func(opts *expectedResponseOptions) {
+		if redactor != nil {
+			opts.redactor = redactor
+		}
+	}
+}
+
+// WithExpectedResponseBodyLimit enables expected response body capture when
+// the scrubbed body is no larger than limit bytes.
+func WithExpectedResponseBodyLimit(limit int64) ExpectedResponseOption {
+	return func(opts *expectedResponseOptions) {
+		if limit >= 0 {
+			opts.bodyLimit = limit
+		}
 	}
 }
 
@@ -405,21 +437,43 @@ func Run(handler http.Handler, snapshot Snapshot) (*httptest.ResponseRecorder, e
 }
 
 // ExpectedResponseFrom captures stable response fields from a replay result.
-func ExpectedResponseFrom(response *httptest.ResponseRecorder) (ExpectedResponse, error) {
+// Response bodies are omitted unless WithExpectedResponseBodyLimit is supplied.
+func ExpectedResponseFrom(response *httptest.ResponseRecorder, opts ...ExpectedResponseOption) (ExpectedResponse, error) {
 	if response == nil {
 		return ExpectedResponse{}, fmt.Errorf("response is required")
+	}
+
+	cfg := expectedResponseOptions{
+		redactor:  scrub.New(),
+		bodyLimit: -1,
+	}
+	for _, opt := range opts {
+		opt(&cfg)
 	}
 
 	result := response.Result()
 	expected := ExpectedResponse{
 		Status:  result.StatusCode,
-		Headers: captureHeaders(scrub.New(), result.Header, defaultResponseHeaders),
+		Headers: captureHeaders(cfg.redactor, result.Header, defaultResponseHeaders),
 	}
-	if response.Body == nil {
+	if response.Body == nil || cfg.bodyLimit < 0 {
 		expected.BodyOmitted = true
 		return expected, nil
 	}
-	expected.Body = slices.Clone(response.Body.Bytes())
+	body := slices.Clone(response.Body.Bytes())
+	if int64(len(body)) > cfg.bodyLimit {
+		expected.BodyOmitted = true
+		return expected, nil
+	}
+	body, omitted, err := scrubBody(cfg.redactor, result.Header.Get("Content-Type"), body)
+	if err != nil {
+		return ExpectedResponse{}, fmt.Errorf("scrub expected response body: %w", err)
+	}
+	if omitted || int64(len(body)) > cfg.bodyLimit {
+		expected.BodyOmitted = true
+		return expected, nil
+	}
+	expected.Body = body
 	return expected, nil
 }
 

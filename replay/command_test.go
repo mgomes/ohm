@@ -86,11 +86,67 @@ func TestCommandWritesExpectedResponse(t *testing.T) {
 	if snapshot.ExpectedResponse.Status != http.StatusCreated {
 		t.Errorf("snapshot.ExpectedResponse.Status = %d, want %d", snapshot.ExpectedResponse.Status, http.StatusCreated)
 	}
-	if string(snapshot.ExpectedResponse.Body) != "post 42" {
-		t.Errorf("snapshot.ExpectedResponse.Body = %q, want %q", snapshot.ExpectedResponse.Body, "post 42")
+	if !snapshot.ExpectedResponse.BodyOmitted {
+		t.Errorf("snapshot.ExpectedResponse.BodyOmitted = false, want true")
+	}
+	if len(snapshot.ExpectedResponse.Body) != 0 {
+		t.Errorf("snapshot.ExpectedResponse.Body = %q, want empty", snapshot.ExpectedResponse.Body)
 	}
 	if snapshot.ExpectedResponse.Headers["Content-Type"][0] != "text/plain; charset=utf-8" {
 		t.Errorf("snapshot.ExpectedResponse.Headers[Content-Type] = %v, want text/plain", snapshot.ExpectedResponse.Headers["Content-Type"])
+	}
+}
+
+func TestCommandWritesScrubbedExpectedResponseBodyWithExplicitOptIn(t *testing.T) {
+	app := ohm.New()
+	app.Get("/login", func(req *ohm.Request) error {
+		req.JSON(http.StatusCreated, map[string]string{
+			"username": "ada",
+			"token":    "secret",
+		})
+		return nil
+	})
+
+	path := writeSnapshot(t, Snapshot{
+		Version: snapshotVersion,
+		Method:  http.MethodGet,
+		Path:    "/login",
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command := Command(app)
+	err := command.Run(context.Background(), cli.IO{Stdout: &stdout, Stderr: &stderr}, []string{"--write-expected", "--write-expected-body", path})
+	if err != nil {
+		t.Fatalf("Command(app).Run(ctx, io, %v) error = %v, want nil", []string{"--write-expected", "--write-expected-body", path}, err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("os.ReadFile(%q) error = %v, want nil", path, err)
+	}
+	var snapshot Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", data, err)
+	}
+	if snapshot.ExpectedResponse == nil {
+		t.Fatalf("snapshot.ExpectedResponse = nil, want response expectation")
+	}
+	if snapshot.ExpectedResponse.BodyOmitted {
+		t.Fatalf("snapshot.ExpectedResponse.BodyOmitted = true, want false")
+	}
+	if bytes.Contains(snapshot.ExpectedResponse.Body, []byte("secret")) {
+		t.Fatalf("snapshot.ExpectedResponse.Body = %q, want sensitive values redacted", snapshot.ExpectedResponse.Body)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(snapshot.ExpectedResponse.Body, &body); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", snapshot.ExpectedResponse.Body, err)
+	}
+	if body["username"] != "ada" {
+		t.Errorf("snapshot.ExpectedResponse.Body username = %q, want %q", body["username"], "ada")
+	}
+	if body["token"] != "[REDACTED]" {
+		t.Errorf("snapshot.ExpectedResponse.Body token = %q, want [REDACTED]", body["token"])
 	}
 }
 
