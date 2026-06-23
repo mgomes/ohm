@@ -110,8 +110,7 @@ vet:
     go vet ./...
 
 fmt:
-    mapfile -t files < <(find . -name '*.go' -not -path './.git/*' -print); \
-    ((${#files[@]} == 0)) || gofmt -w "${files[@]}"
+    find . -name '*.go' ! -path './.git/*' -exec gofmt -w {} +
 
 fmt-check:
     files="$(gofmt -l .)"; \

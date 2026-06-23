@@ -474,7 +474,7 @@ func TestGeneratedSQLiteApplicationBuilds(t *testing.T) {
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
 	runGo(t, destination, "mod", "tidy")
 	runGo(t, destination, "run", "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0", "generate")
-	runShell(t, destination, `mapfile -t files < <(find . -name '*.go' -not -path './.git/*' -print); ((${#files[@]} == 0)) || gofmt -w "${files[@]}"`)
+	runShell(t, destination, `find . -name '*.go' ! -path './.git/*' -exec gofmt -w {} +`)
 	runGo(t, destination, "run", "./cmd/smoke", "db", "seed")
 	runGo(t, destination, "test", "./...")
 }
