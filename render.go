@@ -180,14 +180,20 @@ func decodeRequest(r *http.Request, v any) error {
 
 	switch requestContentType(r) {
 	case contentTypeJSON:
-		defer drainBody(r.Body)
-		if err := decodeJSONBody(r.Body, v); err != nil {
+		body, err := readRequestBody(r.Body, requestBodyLimit(r), "JSON")
+		if err != nil {
+			return decodeClientInputError(err)
+		}
+		if err := decodeJSONBody(bytes.NewReader(body), v); err != nil {
 			return decodeClientInputError(err)
 		}
 		return nil
 	case contentTypeXML:
-		defer drainBody(r.Body)
-		if err := decodeXMLBody(r.Body, v); err != nil {
+		body, err := readRequestBody(r.Body, requestBodyLimit(r), "XML")
+		if err != nil {
+			return decodeClientInputError(err)
+		}
+		if err := decodeXMLBody(bytes.NewReader(body), v); err != nil {
 			return decodeClientInputError(err)
 		}
 		return nil

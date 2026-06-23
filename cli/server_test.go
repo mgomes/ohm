@@ -33,6 +33,22 @@ func TestServerCommandBuildsHTTPServer(t *testing.T) {
 	}
 }
 
+func TestServerCommandDefaultsToLoopbackAddress(t *testing.T) {
+	var gotAddr string
+	command := ServerCommand(&testHandler{}, WithServerRunner(func(_ context.Context, server *http.Server, _ time.Duration, _ []ShutdownHook) error {
+		gotAddr = server.Addr
+		return nil
+	}))
+
+	err := command.Run(context.Background(), IO{}, nil)
+	if err != nil {
+		t.Fatalf("ServerCommand(handler).Run(ctx, io, nil) error = %v, want nil", err)
+	}
+	if gotAddr != "127.0.0.1:3000" {
+		t.Errorf("ServerCommand(handler).Run(ctx, io, nil) server addr = %q, want %q", gotAddr, "127.0.0.1:3000")
+	}
+}
+
 func TestServerCommandSetsRequestBaseContext(t *testing.T) {
 	type contextKey struct{}
 

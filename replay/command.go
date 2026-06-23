@@ -18,7 +18,7 @@ func Command(handler http.Handler) cli.Command {
 	return cli.Command{
 		Name:    "replay",
 		Summary: "replay a request snapshot",
-		Usage:   "replay [--write-expected] <snapshot.json>",
+		Usage:   "replay [--write-expected] [--write-expected-body] <snapshot.json>",
 		Run: func(ctx context.Context, commandIO cli.IO, args []string) error {
 			parsed, err := parseArgs(args)
 			if err != nil {
@@ -39,7 +39,11 @@ func Command(handler http.Handler) cli.Command {
 				return fmt.Errorf("run replay: %w", err)
 			}
 			if parsed.writeExpected {
-				expected, err := ExpectedResponseFrom(response)
+				expectedOpts := []ExpectedResponseOption(nil)
+				if parsed.writeExpectedBody {
+					expectedOpts = append(expectedOpts, WithExpectedResponseBodyLimit(DefaultExpectedResponseBodyLimit))
+				}
+				expected, err := ExpectedResponseFrom(response, expectedOpts...)
 				if err != nil {
 					return err
 				}
@@ -89,8 +93,9 @@ func writeBoundaryWarnings(w io.Writer, snapshot Snapshot) error {
 }
 
 type args struct {
-	snapshotPath  string
-	writeExpected bool
+	snapshotPath      string
+	writeExpected     bool
+	writeExpectedBody bool
 }
 
 func parseArgs(raw []string) (args, error) {
@@ -101,6 +106,9 @@ func parseArgs(raw []string) (args, error) {
 		switch {
 		case arg == "--write-expected" || arg == "-write-expected":
 			parsed.writeExpected = true
+		case arg == "--write-expected-body" || arg == "-write-expected-body":
+			parsed.writeExpected = true
+			parsed.writeExpectedBody = true
 		case strings.HasPrefix(arg, "-"):
 			return args{}, fmt.Errorf("%w: unknown replay flag %q", cli.ErrUsage, arg)
 		default:

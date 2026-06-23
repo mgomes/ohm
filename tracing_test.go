@@ -54,6 +54,32 @@ func TestTracingRecordsServerSpanNamedByRoute(t *testing.T) {
 	}
 }
 
+func TestTracingDoesNotRecordRawRequestPathOrUserAgent(t *testing.T) {
+	recorder := newSpanRecorder(t)
+
+	app := New()
+	app.Use(Tracing())
+	app.Get("/accounts/{id}", func(req *Request) error {
+		req.PlainText(http.StatusOK, "ok")
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/accounts/secret-account", nil)
+	request.Header.Set("User-Agent", "internal-client/1.0 secret-token")
+
+	app.ServeHTTP(httptest.NewRecorder(), request)
+
+	span := recorder.Ended()[0]
+	if got := stringAttr(span.Attributes(), "http.route"); got != "/accounts/{id}" {
+		t.Errorf("http.route = %q, want %q", got, "/accounts/{id}")
+	}
+	for _, key := range []string{"url.path", "user_agent.original"} {
+		if attrPresent(span.Attributes(), key) {
+			t.Errorf("span attribute %q present, want omitted", key)
+		}
+	}
+}
+
 func TestTracingMarksServerErrors(t *testing.T) {
 	recorder := newSpanRecorder(t)
 
@@ -200,4 +226,13 @@ func intAttr(attrs []attribute.KeyValue, key string) int {
 		}
 	}
 	return 0
+}
+
+func attrPresent(attrs []attribute.KeyValue, key string) bool {
+	for _, attr := range attrs {
+		if string(attr.Key) == key {
+			return true
+		}
+	}
+	return false
 }

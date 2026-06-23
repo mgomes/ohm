@@ -29,6 +29,7 @@ type MethodNotAllowedHandler func(http.ResponseWriter, *http.Request, []string)
 type App struct {
 	router             chi.Router
 	errorHandler       ErrorHandler
+	requestBodyLimit   int64
 	routeMethods       []string
 	explicitHeadRoutes map[string]struct{}
 }
@@ -45,11 +46,22 @@ func WithErrorHandler(handler ErrorHandler) Option {
 	}
 }
 
+// WithRequestBodyLimit configures the maximum request body bytes decoded by
+// Request.Decode and Request.Bind.
+func WithRequestBodyLimit(limit int64) Option {
+	return func(app *App) {
+		if limit >= 0 {
+			app.requestBodyLimit = limit
+		}
+	}
+}
+
 // New creates an Ohm application.
 func New(opts ...Option) *App {
 	app := &App{
 		router:             chi.NewRouter(),
 		errorHandler:       DefaultErrorHandler,
+		requestBodyLimit:   DefaultRequestBodyLimit,
 		explicitHeadRoutes: make(map[string]struct{}),
 	}
 	for _, opt := range opts {
@@ -156,6 +168,7 @@ func (a *App) MethodNotAllowed(handler MethodNotAllowedHandler) {
 // ServeHTTP serves HTTP requests.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = withNewResponseStatus(r)
+	r = withRequestBodyLimit(r, a.requestBodyLimit)
 	if r.Method == http.MethodHead {
 		writer, state := newHeadResponseWriter(w)
 		defer state.finish()

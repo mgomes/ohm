@@ -5,6 +5,10 @@ import (
 	"net/http"
 )
 
+// DefaultRequestBodyLimit is the default maximum request body size decoded by
+// Request.Decode and Request.Bind.
+const DefaultRequestBodyLimit int64 = 10 << 20
+
 // Request is the Ohm request and response boundary passed to handlers.
 type Request struct {
 	w    http.ResponseWriter
@@ -22,12 +26,32 @@ type Renderer interface {
 	Render(http.ResponseWriter, *http.Request) error
 }
 
+type requestBodyLimitContextKey struct{}
+
 func newRequest(w http.ResponseWriter, r *http.Request) *Request {
 	return newRequestWithRawResponseWriter(w, w, r)
 }
 
 func newRequestWithRawResponseWriter(w http.ResponseWriter, rawW http.ResponseWriter, r *http.Request) *Request {
 	return &Request{w: w, rawW: rawW, r: r}
+}
+
+func withRequestBodyLimit(r *http.Request, limit int64) *http.Request {
+	if limit < 0 {
+		limit = DefaultRequestBodyLimit
+	}
+	return r.WithContext(context.WithValue(r.Context(), requestBodyLimitContextKey{}, limit))
+}
+
+func requestBodyLimit(r *http.Request) int64 {
+	if r == nil {
+		return DefaultRequestBodyLimit
+	}
+	limit, ok := r.Context().Value(requestBodyLimitContextKey{}).(int64)
+	if !ok || limit < 0 {
+		return DefaultRequestBodyLimit
+	}
+	return limit
 }
 
 // Context returns the standard Go request context.

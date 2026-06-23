@@ -84,7 +84,7 @@ func WithShutdownHook(hook func(context.Context) error) ServerOption {
 func ServerCommand(handler http.Handler, opts ...ServerOption) Command {
 	cfg := serverConfig{
 		name:            "server",
-		addr:            ":3000",
+		addr:            "127.0.0.1:3000",
 		shutdownTimeout: defaultShutdownTimeout,
 		runner:          RunHTTPServer,
 	}

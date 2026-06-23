@@ -59,13 +59,9 @@ func Tracing() Middleware {
 func requestSpanAttrs(r *http.Request) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		semconv.HTTPRequestMethodKey.String(r.Method),
-		semconv.URLPath(r.URL.Path),
 	}
 	if r.URL.Scheme != "" {
 		attrs = append(attrs, semconv.URLScheme(r.URL.Scheme))
-	}
-	if ua := r.UserAgent(); ua != "" {
-		attrs = append(attrs, semconv.UserAgentOriginal(ua))
 	}
 	return attrs
 }

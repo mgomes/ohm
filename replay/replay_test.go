@@ -531,7 +531,7 @@ func TestRunReplaysSnapshotThroughHandler(t *testing.T) {
 	}
 }
 
-func TestExpectedResponseFromCapturesStableResponseFields(t *testing.T) {
+func TestExpectedResponseFromOmitsBodyByDefault(t *testing.T) {
 	response := httptest.NewRecorder()
 	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	response.Header().Set("Location", "/posts")
@@ -547,8 +547,11 @@ func TestExpectedResponseFromCapturesStableResponseFields(t *testing.T) {
 	if got.Status != http.StatusCreated {
 		t.Errorf("ExpectedResponseFrom(response) Status = %d, want %d", got.Status, http.StatusCreated)
 	}
-	if string(got.Body) != "created" {
-		t.Errorf("ExpectedResponseFrom(response) Body = %q, want %q", got.Body, "created")
+	if !got.BodyOmitted {
+		t.Errorf("ExpectedResponseFrom(response) BodyOmitted = false, want true")
+	}
+	if len(got.Body) != 0 {
+		t.Errorf("ExpectedResponseFrom(response) Body = %q, want empty", got.Body)
 	}
 	if got.Headers["Content-Type"][0] != "text/plain; charset=utf-8" {
 		t.Errorf("ExpectedResponseFrom(response) Content-Type = %v, want text/plain", got.Headers["Content-Type"])
@@ -558,6 +561,72 @@ func TestExpectedResponseFromCapturesStableResponseFields(t *testing.T) {
 	}
 	if _, ok := got.Headers["Set-Cookie"]; ok {
 		t.Errorf("ExpectedResponseFrom(response) Set-Cookie present = true, want false")
+	}
+}
+
+func TestExpectedResponseFromCapturesScrubbedBodyWithinLimit(t *testing.T) {
+	response := httptest.NewRecorder()
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(http.StatusCreated)
+	response.Body = bytes.NewBufferString(`{"username":"ada","token":"secret"}`)
+
+	got, err := ExpectedResponseFrom(response, WithExpectedResponseBodyLimit(64))
+	if err != nil {
+		t.Fatalf("ExpectedResponseFrom(response, WithExpectedResponseBodyLimit(64)) error = %v, want nil", err)
+	}
+
+	if got.Status != http.StatusCreated {
+		t.Errorf("ExpectedResponseFrom(response) Status = %d, want %d", got.Status, http.StatusCreated)
+	}
+	if got.BodyOmitted {
+		t.Errorf("ExpectedResponseFrom(response) BodyOmitted = true, want false")
+	}
+	if bytes.Contains(got.Body, []byte("secret")) {
+		t.Fatalf("ExpectedResponseFrom(response) Body = %q, want sensitive values redacted", got.Body)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(got.Body, &body); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v, want nil", got.Body, err)
+	}
+	if body["username"] != "ada" {
+		t.Errorf("scrubbed response username = %v, want %q", body["username"], "ada")
+	}
+	if body["token"] != "[REDACTED]" {
+		t.Errorf("scrubbed response token = %v, want [REDACTED]", body["token"])
+	}
+}
+
+func TestExpectedResponseFromOmitsUnsupportedAndOversizedBodies(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		limit       int64
+	}{
+		{name: "unsupported content type", contentType: "text/plain", body: "created", limit: 64},
+		{name: "over raw limit", contentType: "application/json", body: `{"token":"secret"}`, limit: 3},
+		{name: "over scrubbed limit", contentType: "application/json", body: `{"token":"x"}`, limit: 13},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			response.Header().Set("Content-Type", tt.contentType)
+			response.WriteHeader(http.StatusOK)
+			response.Body = bytes.NewBufferString(tt.body)
+
+			got, err := ExpectedResponseFrom(response, WithExpectedResponseBodyLimit(tt.limit))
+			if err != nil {
+				t.Fatalf("ExpectedResponseFrom(response, WithExpectedResponseBodyLimit(%d)) error = %v, want nil", tt.limit, err)
+			}
+
+			if !got.BodyOmitted {
+				t.Errorf("ExpectedResponseFrom(response) BodyOmitted = false, want true")
+			}
+			if len(got.Body) != 0 {
+				t.Errorf("ExpectedResponseFrom(response) Body = %q, want empty", got.Body)
+			}
+		})
 	}
 }
 

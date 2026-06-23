@@ -85,6 +85,9 @@ func TestGenerateReplayTestWritesRegressionTest(t *testing.T) {
 	if !strings.Contains(body, `replay.RequireDeterministic(snapshot)`) {
 		t.Errorf("GenerateReplayTest(home-page snapshot) test = %q, want deterministic boundary assertion", body)
 	}
+	if !strings.Contains(body, `replay.ExpectedResponseFrom(response, replay.WithExpectedResponseBodyLimit`) {
+		t.Errorf("GenerateReplayTest(home-page snapshot) test = %q, want scrubbed expected body comparison", body)
+	}
 
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
 	runGo(t, destination, "mod", "tidy")
