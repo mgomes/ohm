@@ -261,8 +261,17 @@ func {{.TestName}}(t *testing.T) {
 			t.Errorf("replay response header %s = %v, want %v", header, got, values)
 		}
 	}
-	if !expected.BodyOmitted && !bytes.Equal(response.Body.Bytes(), expected.Body) {
-		t.Errorf("replay response body = %q, want %q", response.Body.Bytes(), expected.Body)
+	if !expected.BodyOmitted {
+		actual, err := replay.ExpectedResponseFrom(response, replay.WithExpectedResponseBodyLimit(int64(^uint64(0)>>1)))
+		if err != nil {
+			t.Fatalf("replay.ExpectedResponseFrom(response) error = %v, want nil", err)
+		}
+		if actual.BodyOmitted {
+			t.Fatalf("replay response body omitted, want %q", expected.Body)
+		}
+		if !bytes.Equal(actual.Body, expected.Body) {
+			t.Errorf("replay response body = %q, want %q", actual.Body, expected.Body)
+		}
 	}
 }
 `

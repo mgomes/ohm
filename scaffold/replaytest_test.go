@@ -42,21 +42,7 @@ func TestGenerateReplayTestWritesRegressionTest(t *testing.T) {
 			Headers: map[string][]string{
 				"Content-Type": {"text/html; charset=utf-8"},
 			},
-			Body: []byte(`<!doctype html>
-<html lang="en">
-	<head>
-		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<title>Journal</title>
-	</head>
-	<body>
-		<main>
-			<section id="home">
-	<h1>Welcome to Journal</h1>
-</section>
-		</main>
-	</body>
-</html>`),
+			BodyOmitted: true,
 		},
 	})
 
@@ -84,6 +70,9 @@ func TestGenerateReplayTestWritesRegressionTest(t *testing.T) {
 	}
 	if !strings.Contains(body, `replay.RequireDeterministic(snapshot)`) {
 		t.Errorf("GenerateReplayTest(home-page snapshot) test = %q, want deterministic boundary assertion", body)
+	}
+	if !strings.Contains(body, `replay.ExpectedResponseFrom(response, replay.WithExpectedResponseBodyLimit`) {
+		t.Errorf("GenerateReplayTest(home-page snapshot) test = %q, want scrubbed expected body comparison", body)
 	}
 
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
