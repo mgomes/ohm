@@ -150,6 +150,33 @@ func TestAppGetHeadFallbackPreservesOptionalWriterInterfaces(t *testing.T) {
 	}
 }
 
+func TestAppGetHeadFallbackFreezesHeadersAtWriteHeader(t *testing.T) {
+	app := New()
+	app.GetHTTP("/late-header", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Early", "yes")
+		w.WriteHeader(http.StatusAccepted)
+		w.Header().Set("X-Late", "no")
+	}))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/late-header", nil)
+
+	app.ServeHTTP(response, request)
+
+	result := response.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, result.StatusCode, http.StatusAccepted)
+	}
+	if got := result.Header.Get("X-Early"); got != "yes" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Early = %q, want %q", request.Method, request.URL.Path, got, "yes")
+	}
+	if got := result.Header.Get("X-Late"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Late = %q, want empty", request.Method, request.URL.Path, got)
+	}
+}
+
 func TestAppHeadOverridesGetHeadFallback(t *testing.T) {
 	app := New()
 	app.Get("/hello", func(req *Request) error {
