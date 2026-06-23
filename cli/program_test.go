@@ -69,7 +69,7 @@ func TestProgramRunPrintsCommandHelpWithFlagPackageHelpArg(t *testing.T) {
 	program := New("myapp", []Command{{
 		Name:    "server",
 		Summary: "start server",
-		Usage:   "server [-addr :3000]",
+		Usage:   "server [-addr 127.0.0.1:3000]",
 		Run: func(context.Context, IO, []string) error {
 			t.Fatalf("command runner called for help argument")
 			return nil
@@ -80,7 +80,7 @@ func TestProgramRunPrintsCommandHelpWithFlagPackageHelpArg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Program.Run(%v) error = %v, want nil", []string{"server", "-help"}, err)
 	}
-	if !strings.Contains(stdout.String(), "Usage: myapp server [-addr :3000]") {
+	if !strings.Contains(stdout.String(), "Usage: myapp server [-addr 127.0.0.1:3000]") {
 		t.Errorf("Program.Run(%v) stdout = %q, want command usage", []string{"server", "-help"}, stdout.String())
 	}
 }
