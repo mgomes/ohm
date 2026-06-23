@@ -196,6 +196,9 @@ func TestGenerateAppWritesSQLiteApplication(t *testing.T) {
 	if !strings.Contains(justfile, "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want pinned sqlc generation task", justfile)
 	}
+	if strings.Contains(justfile, "git ls-files") {
+		t.Errorf("GenerateApp(sqlite app) justfile = %q, want git-independent formatting task", justfile)
+	}
 	if strings.Contains(justfile, "github.com/a-h/templ/cmd/templ") {
 		t.Errorf("GenerateApp(sqlite app) justfile = %q, want no templ generation task", justfile)
 	}
@@ -471,6 +474,7 @@ func TestGeneratedSQLiteApplicationBuilds(t *testing.T) {
 	runGo(t, destination, "mod", "edit", "-replace", "github.com/mgomes/ohm="+root)
 	runGo(t, destination, "mod", "tidy")
 	runGo(t, destination, "run", "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0", "generate")
+	runShell(t, destination, `find . -name '*.go' ! -path './.git/*' -exec gofmt -w {} +`)
 	runGo(t, destination, "run", "./cmd/smoke", "db", "seed")
 	runGo(t, destination, "test", "./...")
 }
@@ -526,5 +530,16 @@ func runGo(t *testing.T, dir string, args ...string) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go %s in %s error = %v\n%s", strings.Join(args, " "), dir, err, output)
+	}
+}
+
+func runShell(t *testing.T, dir string, script string) {
+	t.Helper()
+
+	cmd := exec.Command("bash", "-eu", "-o", "pipefail", "-c", script)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash %q in %s error = %v\n%s", script, dir, err, output)
 	}
 }

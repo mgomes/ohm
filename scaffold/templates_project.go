@@ -110,7 +110,7 @@ vet:
     go vet ./...
 
 fmt:
-    gofmt -w $(git ls-files '*.go')
+    find . -name '*.go' ! -path './.git/*' -exec gofmt -w {} +
 
 fmt-check:
     files="$(gofmt -l .)"; \

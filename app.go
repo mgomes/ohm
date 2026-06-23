@@ -1,10 +1,15 @@
 package ohm
 
 import (
+	"context"
+	"io"
 	"net/http"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -22,9 +27,10 @@ type MethodNotAllowedHandler func(http.ResponseWriter, *http.Request, []string)
 
 // App is an Ohm HTTP application.
 type App struct {
-	router       chi.Router
-	errorHandler ErrorHandler
-	routeMethods []string
+	router             chi.Router
+	errorHandler       ErrorHandler
+	routeMethods       []string
+	explicitHeadRoutes map[string]struct{}
 }
 
 // Option configures an App.
@@ -42,8 +48,9 @@ func WithErrorHandler(handler ErrorHandler) Option {
 // New creates an Ohm application.
 func New(opts ...Option) *App {
 	app := &App{
-		router:       chi.NewRouter(),
-		errorHandler: DefaultErrorHandler,
+		router:             chi.NewRouter(),
+		errorHandler:       DefaultErrorHandler,
+		explicitHeadRoutes: make(map[string]struct{}),
 	}
 	for _, opt := range opts {
 		opt(app)
@@ -65,8 +72,20 @@ func (a *App) Handle(method string, pattern string, handler Handler) {
 
 // HandleHTTP registers handler for method and pattern.
 func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
+	method = strings.ToUpper(method)
 	a.router.Method(method, pattern, handler)
 	a.addRouteMethod(method)
+	if method == http.MethodHead {
+		a.addExplicitHeadRoute(pattern)
+		return
+	}
+	if method == http.MethodGet {
+		if a.hasExplicitHeadRoute(pattern) {
+			return
+		}
+		a.router.Method(http.MethodHead, pattern, handler)
+		a.addRouteMethod(http.MethodHead)
+	}
 }
 
 // Get registers a GET route.
@@ -136,7 +155,15 @@ func (a *App) MethodNotAllowed(handler MethodNotAllowedHandler) {
 
 // ServeHTTP serves HTTP requests.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a.router.ServeHTTP(w, withNewResponseStatus(r))
+	r = withNewResponseStatus(r)
+	if r.Method == http.MethodHead {
+		writer, state := newHeadResponseWriter(w)
+		defer state.finish()
+		r = withHeadResponseWriter(r, writer, w)
+		a.router.ServeHTTP(writer, r)
+		return
+	}
+	a.router.ServeHTTP(w, r)
 }
 
 // HTTPHandler returns the underlying HTTP handler.
@@ -205,6 +232,85 @@ func (a *App) addRouteMethod(method string) {
 	a.routeMethods = slices.Insert(a.routeMethods, index, method)
 }
 
+func (a *App) addExplicitHeadRoute(pattern string) {
+	if a.explicitHeadRoutes == nil {
+		a.explicitHeadRoutes = make(map[string]struct{})
+	}
+	a.explicitHeadRoutes[routePatternShape(pattern)] = struct{}{}
+}
+
+func (a *App) hasExplicitHeadRoute(pattern string) bool {
+	if a.explicitHeadRoutes == nil {
+		return false
+	}
+	_, ok := a.explicitHeadRoutes[routePatternShape(pattern)]
+	return ok
+}
+
+func routePatternShape(pattern string) string {
+	var shape strings.Builder
+	for len(pattern) > 0 {
+		paramStart := strings.Index(pattern, "{")
+		wildcardStart := strings.Index(pattern, "*")
+		if paramStart < 0 && wildcardStart < 0 {
+			shape.WriteString(pattern)
+			return shape.String()
+		}
+		if wildcardStart >= 0 && (paramStart < 0 || wildcardStart < paramStart) {
+			shape.WriteString(pattern[:wildcardStart+1])
+			return shape.String()
+		}
+
+		shape.WriteString(pattern[:paramStart])
+		paramEnd := routeParamEnd(pattern[paramStart:])
+		if paramEnd < 0 {
+			shape.WriteString(pattern[paramStart:])
+			return shape.String()
+		}
+
+		param := pattern[paramStart+1 : paramStart+paramEnd]
+		_, rexpat, hasRegexp := strings.Cut(param, ":")
+		if !hasRegexp {
+			shape.WriteString("{}")
+		} else {
+			shape.WriteString("{:")
+			shape.WriteString(normalizeRouteRegexp(rexpat))
+			shape.WriteString("}")
+		}
+		pattern = pattern[paramStart+paramEnd+1:]
+	}
+	return shape.String()
+}
+
+func routeParamEnd(pattern string) int {
+	depth := 0
+	for i, r := range pattern {
+		switch r {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func normalizeRouteRegexp(rexpat string) string {
+	if rexpat == "" {
+		return rexpat
+	}
+	if rexpat[0] != '^' {
+		rexpat = "^" + rexpat
+	}
+	if rexpat[len(rexpat)-1] != '$' {
+		rexpat += "$"
+	}
+	return rexpat
+}
+
 func staticPrefix(pattern string) string {
 	prefix := strings.TrimSuffix(pattern, "*")
 	if prefix == "" {
@@ -215,10 +321,11 @@ func staticPrefix(pattern string) string {
 
 func (a *App) adapt(handler Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawW := rawResponseWriter(w, r)
 		tracked, state := trackResponse(w)
 		r = withResponseStatus(r)
 		markResponseStatusHandlerStarted(r)
-		req := newRequestWithRawResponseWriter(tracked, w, r)
+		req := newRequestWithRawResponseWriter(tracked, rawW, r)
 		if err := handler(req); err != nil {
 			recordHandlerError(r.Context(), err)
 			if state.committed() {
@@ -227,6 +334,231 @@ func (a *App) adapt(handler Handler) http.Handler {
 			a.errorHandler(req, err)
 		}
 	})
+}
+
+type headResponseWriterContextKey struct{}
+
+type headResponseWriterContext struct {
+	writer http.ResponseWriter
+	raw    http.ResponseWriter
+}
+
+func withHeadResponseWriter(r *http.Request, writer http.ResponseWriter, raw http.ResponseWriter) *http.Request {
+	ctx := context.WithValue(r.Context(), headResponseWriterContextKey{}, headResponseWriterContext{
+		writer: writer,
+		raw:    raw,
+	})
+	return r.WithContext(ctx)
+}
+
+func rawResponseWriter(w http.ResponseWriter, r *http.Request) http.ResponseWriter {
+	head, ok := r.Context().Value(headResponseWriterContextKey{}).(headResponseWriterContext)
+	if !ok || !sameResponseWriter(w, head.writer) {
+		return w
+	}
+	return head.raw
+}
+
+func sameResponseWriter(a http.ResponseWriter, b http.ResponseWriter) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	aValue := reflect.ValueOf(a)
+	bValue := reflect.ValueOf(b)
+	if !aValue.Type().Comparable() || !bValue.Type().Comparable() {
+		return false
+	}
+	return a == b
+}
+
+type headResponseState struct {
+	writer      http.ResponseWriter
+	writeHeader func(int)
+
+	status         int
+	wroteHeader    bool
+	headerSnapshot http.Header
+	bodyBytes      int64
+	flushed        bool
+	committed      bool
+}
+
+func newHeadResponseWriter(w http.ResponseWriter) (http.ResponseWriter, *headResponseState) {
+	state := &headResponseState{
+		writer:      w,
+		writeHeader: w.WriteHeader,
+	}
+	return httpsnoop.Wrap(w, httpsnoop.Hooks{
+		WriteHeader: func(next httpsnoop.WriteHeaderFunc) httpsnoop.WriteHeaderFunc {
+			state.writeHeader = next
+			return state.WriteHeader
+		},
+		Write: func(httpsnoop.WriteFunc) httpsnoop.WriteFunc {
+			return state.Write
+		},
+		WriteString: func(httpsnoop.WriteStringFunc) httpsnoop.WriteStringFunc {
+			return state.WriteString
+		},
+		ReadFrom: func(httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
+			return state.ReadFrom
+		},
+		Flush: func(next httpsnoop.FlushFunc) httpsnoop.FlushFunc {
+			return func() {
+				state.Flush(next)
+			}
+		},
+		FlushError: func(next httpsnoop.FlushErrorFunc) httpsnoop.FlushErrorFunc {
+			return func() error {
+				return state.FlushError(next)
+			}
+		},
+	}), state
+}
+
+func (s *headResponseState) Header() http.Header {
+	if s.headerSnapshot != nil {
+		return s.headerSnapshot
+	}
+	return s.writer.Header()
+}
+
+func (s *headResponseState) WriteHeader(status int) {
+	if !finalStatus(status) {
+		s.writeHeader(status)
+		return
+	}
+	s.beginFinalResponse(status)
+}
+
+func (s *headResponseState) Write(body []byte) (int, error) {
+	if !s.wroteHeader {
+		s.beginFinalResponse(http.StatusOK)
+	}
+	if !statusAllowsResponseBody(s.status) {
+		return 0, http.ErrBodyNotAllowed
+	}
+	s.recordBody(body)
+	return len(body), nil
+}
+
+func (s *headResponseState) WriteString(body string) (int, error) {
+	return s.Write([]byte(body))
+}
+
+func (s *headResponseState) ReadFrom(src io.Reader) (int64, error) {
+	return io.Copy(headResponseBodyWriter{state: s}, src)
+}
+
+type headResponseBodyWriter struct {
+	state *headResponseState
+}
+
+func (w headResponseBodyWriter) Write(body []byte) (int, error) {
+	return w.state.Write(body)
+}
+
+func (s *headResponseState) Flush(next httpsnoop.FlushFunc) {
+	if !s.wroteHeader {
+		s.beginFinalResponse(http.StatusOK)
+	}
+	s.flushed = true
+	s.commit()
+	next()
+}
+
+func (s *headResponseState) FlushError(next httpsnoop.FlushErrorFunc) error {
+	if !s.wroteHeader {
+		s.beginFinalResponse(http.StatusOK)
+	}
+	s.flushed = true
+	s.commit()
+	return next()
+}
+
+func (s *headResponseState) finish() {
+	s.commit()
+}
+
+func (s *headResponseState) beginFinalResponse(status int) {
+	if s.wroteHeader {
+		return
+	}
+	s.status = status
+	s.wroteHeader = true
+	s.headerSnapshot = s.writer.Header().Clone()
+}
+
+func (s *headResponseState) recordBody(body []byte) {
+	s.bodyBytes += int64(len(body))
+	// Match net/http's chunkWriter: the first body chunk can still supply
+	// representation headers after logical WriteHeader.
+	s.sniffContentType(body)
+}
+
+func (s *headResponseState) sniffContentType(body []byte) {
+	if len(body) == 0 {
+		return
+	}
+	header := s.Header()
+	if _, ok := header["Content-Type"]; ok {
+		return
+	}
+	if header.Get("Content-Encoding") != "" || header.Get("Transfer-Encoding") != "" {
+		return
+	}
+	header.Set("Content-Type", http.DetectContentType(body))
+}
+
+func (s *headResponseState) commit() {
+	if s.committed || !s.wroteHeader {
+		return
+	}
+
+	header := s.Header()
+	s.applyBodyHeaders(header)
+	s.restoreHeader(header)
+	s.writeHeader(s.status)
+	s.committed = true
+}
+
+func (s *headResponseState) applyBodyHeaders(header http.Header) {
+	if !statusAllowsResponseBody(s.status) {
+		header.Del("Content-Type")
+		header.Del("Content-Length")
+		header.Del("Transfer-Encoding")
+		return
+	}
+	if s.flushed || s.bodyBytes == 0 {
+		return
+	}
+	if _, ok := header["Content-Length"]; ok {
+		return
+	}
+	if header.Get("Transfer-Encoding") != "" {
+		return
+	}
+	header.Set("Content-Length", strconv.FormatInt(s.bodyBytes, 10))
+}
+
+func (s *headResponseState) restoreHeader(header http.Header) {
+	live := s.writer.Header()
+	clear(live)
+	for name, values := range header {
+		live[name] = slices.Clone(values)
+	}
+}
+
+func statusAllowsResponseBody(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	default:
+		return true
+	}
 }
 
 // Route describes one registered route.

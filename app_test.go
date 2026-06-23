@@ -53,6 +53,297 @@ func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
 	}
 }
 
+func TestAppGetHandlesHeadWithoutBody(t *testing.T) {
+	app := New()
+	app.Get("/hello", func(req *Request) error {
+		if req.HTTPRequest().Method != http.MethodHead {
+			t.Errorf("Request.HTTPRequest().Method = %q, want %q", req.HTTPRequest().Method, http.MethodHead)
+		}
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/plain; charset=utf-8")
+	}
+	if got := res.Header().Get("Content-Length"); got != "5" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "5")
+	}
+	if res.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.Body.Len())
+	}
+}
+
+func TestAppGetHeadFallbackPreservesImplicitWriteHeaders(t *testing.T) {
+	app := New()
+	app.GetHTTP("/raw", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<main>hello</main>"))
+	}))
+
+	getResponse := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(http.MethodGet, "/raw", nil)
+	app.ServeHTTP(getResponse, getRequest)
+
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", getRequest.Method, getRequest.URL.Path, getResponse.Code, http.StatusOK)
+	}
+	wantContentType := getResponse.Header().Get("Content-Type")
+	if wantContentType == "" {
+		t.Fatalf("App.ServeHTTP(%s %s) Content-Type is empty, want inferred type", getRequest.Method, getRequest.URL.Path)
+	}
+
+	headResponse := httptest.NewRecorder()
+	headRequest := httptest.NewRequest(http.MethodHead, "/raw", nil)
+	app.ServeHTTP(headResponse, headRequest)
+
+	if headResponse.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", headRequest.Method, headRequest.URL.Path, headResponse.Code, http.StatusOK)
+	}
+	if got := headResponse.Header().Get("Content-Type"); got != wantContentType {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", headRequest.Method, headRequest.URL.Path, got, wantContentType)
+	}
+	if got := headResponse.Header().Get("Content-Length"); got != "18" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", headRequest.Method, headRequest.URL.Path, got, "18")
+	}
+	if headResponse.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", headRequest.Method, headRequest.URL.Path, headResponse.Body.Len())
+	}
+}
+
+func TestAppGetHeadFallbackInfersBodyHeadersAfterWriteHeader(t *testing.T) {
+	app := New()
+	app.GetHTTP("/raw", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("<html><body>hello</body></html>"))
+	}))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/raw", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/html; charset=utf-8")
+	}
+	if got := response.Header().Get("Content-Length"); got != "31" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "31")
+	}
+	if response.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, response.Body.Len())
+	}
+}
+
+func TestAppGetHeadFallbackPreservesOptionalWriterInterfaces(t *testing.T) {
+	app := New()
+	app.Get("/copy", func(req *Request) error {
+		if _, ok := req.ResponseWriter().(http.Flusher); !ok {
+			return errors.New("response writer missing http.Flusher")
+		}
+		if _, ok := req.ResponseWriter().(io.ReaderFrom); !ok {
+			return errors.New("response writer missing io.ReaderFrom")
+		}
+		_, err := io.Copy(req.ResponseWriter(), strings.NewReader("hello"))
+		return err
+	})
+
+	res := &optionalInterfaceRecorder{ResponseRecorder: httptest.NewRecorder()}
+	request := httptest.NewRequest(http.MethodHead, "/copy", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Length"); got != "5" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "5")
+	}
+	if res.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.Body.Len())
+	}
+	if res.readFromCalled {
+		t.Errorf("App.ServeHTTP(%s %s) called underlying ReadFrom, want body suppressed by HEAD wrapper", request.Method, request.URL.Path)
+	}
+}
+
+func TestAppGetHeadFallbackFreezesHeadersAtWriteHeader(t *testing.T) {
+	app := New()
+	app.GetHTTP("/late-header", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Early", "yes")
+		w.WriteHeader(http.StatusAccepted)
+		w.Header().Set("X-Late", "no")
+	}))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/late-header", nil)
+
+	app.ServeHTTP(response, request)
+
+	result := response.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, result.StatusCode, http.StatusAccepted)
+	}
+	if got := result.Header.Get("X-Early"); got != "yes" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Early = %q, want %q", request.Method, request.URL.Path, got, "yes")
+	}
+	if got := result.Header.Get("X-Late"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Late = %q, want empty", request.Method, request.URL.Path, got)
+	}
+}
+
+func TestAppGetHeadFallbackLetsMiddlewareObserveWrites(t *testing.T) {
+	app := New()
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(&transformingMiddlewareWriter{ResponseWriter: w}, r)
+		})
+	})
+	app.Get("/hello", func(req *Request) error {
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("X-Middleware-Saw-Body"); got != "yes" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Middleware-Saw-Body = %q, want %q", request.Method, request.URL.Path, got, "yes")
+	}
+	if got := response.Header().Get("Content-Encoding"); got != "test" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want %q", request.Method, request.URL.Path, got, "test")
+	}
+	if response.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, response.Body.Len())
+	}
+}
+
+func TestAppHeadOverridesGetHeadFallback(t *testing.T) {
+	app := New()
+	app.Get("/hello", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "get")
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+	app.Head("/hello", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "head")
+		req.ResponseWriter().WriteHeader(http.StatusNoContent)
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("X-Handler"); got != "head" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Handler = %q, want %q", request.Method, request.URL.Path, got, "head")
+	}
+}
+
+func TestAppGetDoesNotOverrideExistingHeadHandler(t *testing.T) {
+	app := New()
+	app.Head("/hello", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "head")
+		req.ResponseWriter().WriteHeader(http.StatusNoContent)
+		return nil
+	})
+	app.Get("/hello", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "get")
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("X-Handler"); got != "head" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Handler = %q, want %q", request.Method, request.URL.Path, got, "head")
+	}
+}
+
+func TestAppGetDoesNotOverrideExistingHeadHandlerWithRenamedParam(t *testing.T) {
+	app := New()
+	app.Head("/posts/{postID}", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "head")
+		req.ResponseWriter().Header().Set("X-Post-ID", req.Param("postID"))
+		req.ResponseWriter().WriteHeader(http.StatusNoContent)
+		return nil
+	})
+	app.Get("/posts/{id}", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "get")
+		req.ResponseWriter().Header().Set("X-Post-ID", req.Param("id"))
+		req.PlainText(http.StatusOK, "post")
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/posts/42", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("X-Handler"); got != "head" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Handler = %q, want %q", request.Method, request.URL.Path, got, "head")
+	}
+	if got := res.Header().Get("X-Post-ID"); got != "42" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Post-ID = %q, want %q", request.Method, request.URL.Path, got, "42")
+	}
+}
+
+func TestAppHeadFallbackCommitsBufferedHeadersDuringPanic(t *testing.T) {
+	app := New()
+	app.GetHTTP("/panic", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Before-Panic", "yes")
+		w.WriteHeader(http.StatusAccepted)
+		panic("boom")
+	}))
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/panic", nil)
+
+	recoverUncommittedResponses(app.HTTPHandler()).ServeHTTP(res, request)
+
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusAccepted)
+	}
+	if got := res.Header().Get("X-Before-Panic"); got != "yes" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Before-Panic = %q, want %q", request.Method, request.URL.Path, got, "yes")
+	}
+	if got := res.Header().Get("X-Recovered"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Recovered = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if res.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.Body.Len())
+	}
+}
+
 func TestAppDefaultErrorHandlerRendersHTTPError(t *testing.T) {
 	app := New()
 	app.Get("/missing", func(req *Request) error {
@@ -484,6 +775,39 @@ func TestAppRawResponseWriterPreservesCustomExtensions(t *testing.T) {
 	}
 }
 
+func TestAppHeadRawResponseWriterPreservesCustomExtensions(t *testing.T) {
+	var gotCustom bool
+	app := New()
+	app.Get("/custom", func(req *Request) error {
+		custom, ok := req.RawResponseWriter().(customResponseWriterExtension)
+		gotCustom = ok
+		if !ok {
+			return errors.New("custom response writer extension missing")
+		}
+
+		req.PlainText(http.StatusOK, custom.CustomResponseWriterValue())
+		return nil
+	})
+
+	res := &customExtensionRecorder{value: "custom"}
+	request := httptest.NewRequest(http.MethodHead, "/custom", nil)
+
+	app.ServeHTTP(res, request)
+
+	if !gotCustom {
+		t.Errorf("Request.RawResponseWriter() custom extension = false, want true")
+	}
+	if res.status != http.StatusOK {
+		t.Errorf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.status, http.StatusOK)
+	}
+	if got := res.header.Get("Content-Length"); got != "6" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "6")
+	}
+	if res.body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.body.Len())
+	}
+}
+
 type customResponseWriterExtension interface {
 	CustomResponseWriterValue() string
 }
@@ -583,6 +907,7 @@ func TestAppRoutesReturnsRegisteredRoutes(t *testing.T) {
 
 	want := []Route{
 		{Method: http.MethodGet, Pattern: "/posts"},
+		{Method: http.MethodHead, Pattern: "/posts"},
 		{Method: http.MethodPost, Pattern: "/posts"},
 	}
 	if len(got) != len(want) {
@@ -622,6 +947,9 @@ func TestAppStaticServesGetAndHead(t *testing.T) {
 
 	if headResponse.Code != http.StatusOK {
 		t.Errorf("App.Static(%q, %q) HEAD status = %d, want %d", "/assets/*", staticRoot, headResponse.Code, http.StatusOK)
+	}
+	if headResponse.Body.Len() != 0 {
+		t.Errorf("App.Static(%q, %q) HEAD body length = %d, want 0", "/assets/*", staticRoot, headResponse.Body.Len())
 	}
 }
 
@@ -698,7 +1026,7 @@ func TestAllowedMethodsNormalizesGenericHandleMethod(t *testing.T) {
 	})
 
 	got := app.AllowedMethods("/posts")
-	want := []string{http.MethodGet}
+	want := []string{http.MethodGet, http.MethodHead}
 
 	if !slices.Equal(got, want) {
 		t.Errorf("App.AllowedMethods(%q) = %v, want %v", "/posts", got, want)
@@ -739,6 +1067,68 @@ type allowedMethodRoutes struct {
 	matchCalls     int
 	changedContext bool
 	dirtyContext   bool
+}
+
+type optionalInterfaceRecorder struct {
+	*httptest.ResponseRecorder
+	readFromCalled bool
+}
+
+func (r *optionalInterfaceRecorder) ReadFrom(src io.Reader) (int64, error) {
+	r.readFromCalled = true
+	return r.Body.ReadFrom(src)
+}
+
+type transformingMiddlewareWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *transformingMiddlewareWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *transformingMiddlewareWriter) Write(body []byte) (int, error) {
+	w.Header().Set("X-Middleware-Saw-Body", "yes")
+	w.Header().Set("Content-Encoding", "test")
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	w.ResponseWriter.WriteHeader(w.status)
+	n, err := w.ResponseWriter.Write(body)
+	if err != nil {
+		return n, err
+	}
+	return len(body), nil
+}
+
+func recoverUncommittedResponses(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracked := &commitTrackingWriter{ResponseWriter: w}
+		defer func() {
+			if recover() == nil || tracked.committed {
+				return
+			}
+			tracked.Header().Set("X-Recovered", "yes")
+			http.Error(tracked, "recovered", http.StatusInternalServerError)
+		}()
+		next.ServeHTTP(tracked, r)
+	})
+}
+
+type commitTrackingWriter struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (w *commitTrackingWriter) WriteHeader(status int) {
+	w.committed = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *commitTrackingWriter) Write(body []byte) (int, error) {
+	w.committed = true
+	return w.ResponseWriter.Write(body)
 }
 
 func (r *allowedMethodRoutes) Routes() []chi.Route {

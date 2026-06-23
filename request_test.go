@@ -192,6 +192,8 @@ func TestRequestDecodeRejectsMalformedClientInputAsBadRequest(t *testing.T) {
 	}{
 		{name: "malformed JSON", contentType: "application/json", body: `{"title":`},
 		{name: "empty JSON", contentType: "application/json", body: ""},
+		{name: "trailing JSON value", contentType: "application/json", body: `{"title":"hello"}{"title":"again"}`},
+		{name: "trailing XML value", contentType: "application/xml", body: `<formPayload><Title>hello</Title></formPayload><formPayload><Title>again</Title></formPayload>`},
 		{name: "unsupported content type", contentType: "text/plain", body: "title=hello"},
 		{name: "malformed form", contentType: "application/x-www-form-urlencoded", body: "title=%zz"},
 		{name: "unknown form field", contentType: "application/x-www-form-urlencoded", body: "unknown=hello"},
@@ -218,6 +220,36 @@ func TestRequestDecodeRejectsMalformedClientInputAsBadRequest(t *testing.T) {
 				t.Errorf("App.ServeHTTP(%s %s, %s) body = %q, want %q", request.Method, request.URL.Path, tt.contentType, got, http.StatusText(http.StatusBadRequest))
 			}
 		})
+	}
+}
+
+func TestRequestDecodeAllowsXMLEpilogTrivia(t *testing.T) {
+	app := New()
+	app.Post("/posts", func(req *Request) error {
+		var payload formPayload
+		if err := req.Decode(&payload); err != nil {
+			return err
+		}
+		req.JSON(http.StatusOK, payload)
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(`<formPayload><Title>hello</Title></formPayload><!--generated--><?source test?>`))
+	request.Header.Set("Content-Type", "application/xml")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+
+	var got formPayload
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("json.Decode(response body) error = %v, want nil", err)
+	}
+	if got.Title != "hello" {
+		t.Errorf("Request.Decode(xml).Title = %q, want %q", got.Title, "hello")
 	}
 }
 
