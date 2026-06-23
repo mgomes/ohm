@@ -118,6 +118,32 @@ func TestAppGetHeadFallbackPreservesImplicitWriteHeaders(t *testing.T) {
 	}
 }
 
+func TestAppGetHeadFallbackInfersBodyHeadersAfterWriteHeader(t *testing.T) {
+	app := New()
+	app.GetHTTP("/raw", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("<html><body>hello</body></html>"))
+	}))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/raw", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusCreated)
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/html; charset=utf-8")
+	}
+	if got := response.Header().Get("Content-Length"); got != "31" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "31")
+	}
+	if response.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, response.Body.Len())
+	}
+}
+
 func TestAppGetHeadFallbackPreservesOptionalWriterInterfaces(t *testing.T) {
 	app := New()
 	app.Get("/copy", func(req *Request) error {

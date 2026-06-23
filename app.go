@@ -490,6 +490,8 @@ func (s *headResponseState) beginFinalResponse(status int) {
 
 func (s *headResponseState) recordBody(body []byte) {
 	s.bodyBytes += int64(len(body))
+	// Match net/http's chunkWriter: the first body chunk can still supply
+	// representation headers after logical WriteHeader.
 	s.sniffContentType(body)
 }
 
