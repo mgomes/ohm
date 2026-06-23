@@ -344,27 +344,15 @@ func (s *headResponseState) WriteString(body string) (int, error) {
 }
 
 func (s *headResponseState) ReadFrom(src io.Reader) (int64, error) {
-	var total int64
-	var buf [32 * 1024]byte
-	for {
-		n, readErr := src.Read(buf[:])
-		if n > 0 {
-			written, writeErr := s.Write(buf[:n])
-			total += int64(written)
-			if writeErr != nil {
-				return total, writeErr
-			}
-			if written != n {
-				return total, io.ErrShortWrite
-			}
-		}
-		if readErr == io.EOF {
-			return total, nil
-		}
-		if readErr != nil {
-			return total, readErr
-		}
-	}
+	return io.Copy(headResponseBodyWriter{state: s}, src)
+}
+
+type headResponseBodyWriter struct {
+	state *headResponseState
+}
+
+func (w headResponseBodyWriter) Write(body []byte) (int, error) {
+	return w.state.Write(body)
 }
 
 func (s *headResponseState) Flush(next httpsnoop.FlushFunc) {
