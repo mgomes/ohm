@@ -226,6 +226,51 @@ func TestRequestDecodeRejectsOversizedStructuredBodiesAsClientError(t *testing.T
 	}
 }
 
+func TestRequestDecodeDoesNotDrainOversizedStructuredBodies(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+	}{
+		{
+			name:        "JSON",
+			contentType: "application/json",
+			body:        `{"title":"` + strings.Repeat("a", 128) + `"}`,
+		},
+		{
+			name:        "XML",
+			contentType: "application/xml",
+			body:        `<formPayload><Title>` + strings.Repeat("a", 128) + `</Title></formPayload>`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const limit int64 = 24
+			app := New(WithRequestBodyLimit(limit))
+			app.Post("/posts", func(req *Request) error {
+				var payload formPayload
+				return req.Decode(&payload)
+			})
+
+			body := &countingReadCloser{reader: strings.NewReader(tt.body)}
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/posts", nil)
+			request.Body = body
+			request.Header.Set("Content-Type", tt.contentType)
+
+			app.ServeHTTP(response, request)
+
+			if response.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("App.ServeHTTP(%s %s, %s) status = %d, want %d", request.Method, request.URL.Path, tt.contentType, response.Code, http.StatusRequestEntityTooLarge)
+			}
+			if body.bytesRead > int(limit)+1 {
+				t.Errorf("App.ServeHTTP(%s %s, %s) read %d body bytes, want at most %d", request.Method, request.URL.Path, tt.contentType, body.bytesRead, limit+1)
+			}
+		})
+	}
+}
+
 func TestRequestDecodeRejectsMalformedClientInputAsBadRequest(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1452,6 +1497,21 @@ type formPayload struct {
 
 type author struct {
 	Name string `form:"name" json:"name"`
+}
+
+type countingReadCloser struct {
+	reader    *strings.Reader
+	bytesRead int
+}
+
+func (r *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.bytesRead += n
+	return n, err
+}
+
+func (r *countingReadCloser) Close() error {
+	return nil
 }
 
 type renderPayload struct {
