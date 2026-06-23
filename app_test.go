@@ -177,6 +177,37 @@ func TestAppGetHeadFallbackFreezesHeadersAtWriteHeader(t *testing.T) {
 	}
 }
 
+func TestAppGetHeadFallbackLetsMiddlewareObserveWrites(t *testing.T) {
+	app := New()
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(&transformingMiddlewareWriter{ResponseWriter: w}, r)
+		})
+	})
+	app.Get("/hello", func(req *Request) error {
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("X-Middleware-Saw-Body"); got != "yes" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Middleware-Saw-Body = %q, want %q", request.Method, request.URL.Path, got, "yes")
+	}
+	if got := response.Header().Get("Content-Encoding"); got != "test" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want %q", request.Method, request.URL.Path, got, "test")
+	}
+	if response.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, response.Body.Len())
+	}
+}
+
 func TestAppHeadOverridesGetHeadFallback(t *testing.T) {
 	app := New()
 	app.Get("/hello", func(req *Request) error {
@@ -929,6 +960,29 @@ type optionalInterfaceRecorder struct {
 func (r *optionalInterfaceRecorder) ReadFrom(src io.Reader) (int64, error) {
 	r.readFromCalled = true
 	return r.Body.ReadFrom(src)
+}
+
+type transformingMiddlewareWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *transformingMiddlewareWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *transformingMiddlewareWriter) Write(body []byte) (int, error) {
+	w.Header().Set("X-Middleware-Saw-Body", "yes")
+	w.Header().Set("Content-Encoding", "test")
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	w.ResponseWriter.WriteHeader(w.status)
+	n, err := w.ResponseWriter.Write(body)
+	if err != nil {
+		return n, err
+	}
+	return len(body), nil
 }
 
 func (r *allowedMethodRoutes) Routes() []chi.Route {

@@ -81,7 +81,7 @@ func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
 		if a.hasExplicitHeadRoute(pattern) {
 			return
 		}
-		a.router.Method(http.MethodHead, pattern, discardResponseBody(handler))
+		a.router.Method(http.MethodHead, pattern, handler)
 		a.addRouteMethod(http.MethodHead)
 	}
 }
@@ -153,7 +153,14 @@ func (a *App) MethodNotAllowed(handler MethodNotAllowedHandler) {
 
 // ServeHTTP serves HTTP requests.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a.router.ServeHTTP(w, withNewResponseStatus(r))
+	r = withNewResponseStatus(r)
+	if r.Method == http.MethodHead {
+		writer, state := newHeadResponseWriter(w)
+		a.router.ServeHTTP(writer, r)
+		state.finish()
+		return
+	}
+	a.router.ServeHTTP(w, r)
 }
 
 // HTTPHandler returns the underlying HTTP handler.
@@ -258,14 +265,6 @@ func (a *App) adapt(handler Handler) http.Handler {
 			}
 			a.errorHandler(req, err)
 		}
-	})
-}
-
-func discardResponseBody(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writer, state := newHeadResponseWriter(w)
-		next.ServeHTTP(writer, r)
-		state.finish()
 	})
 }
 
