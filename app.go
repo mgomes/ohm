@@ -22,9 +22,10 @@ type MethodNotAllowedHandler func(http.ResponseWriter, *http.Request, []string)
 
 // App is an Ohm HTTP application.
 type App struct {
-	router       chi.Router
-	errorHandler ErrorHandler
-	routeMethods []string
+	router             chi.Router
+	errorHandler       ErrorHandler
+	routeMethods       []string
+	explicitHeadRoutes map[string]struct{}
 }
 
 // Option configures an App.
@@ -42,8 +43,9 @@ func WithErrorHandler(handler ErrorHandler) Option {
 // New creates an Ohm application.
 func New(opts ...Option) *App {
 	app := &App{
-		router:       chi.NewRouter(),
-		errorHandler: DefaultErrorHandler,
+		router:             chi.NewRouter(),
+		errorHandler:       DefaultErrorHandler,
+		explicitHeadRoutes: make(map[string]struct{}),
 	}
 	for _, opt := range opts {
 		opt(app)
@@ -65,8 +67,20 @@ func (a *App) Handle(method string, pattern string, handler Handler) {
 
 // HandleHTTP registers handler for method and pattern.
 func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
+	method = strings.ToUpper(method)
 	a.router.Method(method, pattern, handler)
 	a.addRouteMethod(method)
+	if method == http.MethodHead {
+		a.addExplicitHeadRoute(pattern)
+		return
+	}
+	if method == http.MethodGet {
+		if a.hasExplicitHeadRoute(pattern) {
+			return
+		}
+		a.router.Method(http.MethodHead, pattern, discardResponseBody(handler))
+		a.addRouteMethod(http.MethodHead)
+	}
 }
 
 // Get registers a GET route.
@@ -205,6 +219,21 @@ func (a *App) addRouteMethod(method string) {
 	a.routeMethods = slices.Insert(a.routeMethods, index, method)
 }
 
+func (a *App) addExplicitHeadRoute(pattern string) {
+	if a.explicitHeadRoutes == nil {
+		a.explicitHeadRoutes = make(map[string]struct{})
+	}
+	a.explicitHeadRoutes[pattern] = struct{}{}
+}
+
+func (a *App) hasExplicitHeadRoute(pattern string) bool {
+	if a.explicitHeadRoutes == nil {
+		return false
+	}
+	_, ok := a.explicitHeadRoutes[pattern]
+	return ok
+}
+
 func staticPrefix(pattern string) string {
 	prefix := strings.TrimSuffix(pattern, "*")
 	if prefix == "" {
@@ -227,6 +256,24 @@ func (a *App) adapt(handler Handler) http.Handler {
 			a.errorHandler(req, err)
 		}
 	})
+}
+
+func discardResponseBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(headResponseWriter{ResponseWriter: w}, r)
+	})
+}
+
+type headResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (w headResponseWriter) Write(body []byte) (int, error) {
+	return len(body), nil
+}
+
+func (w headResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // Route describes one registered route.

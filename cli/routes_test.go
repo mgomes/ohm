@@ -25,7 +25,7 @@ func TestRoutesCommandPrintsRoutes(t *testing.T) {
 		t.Fatalf("RoutesCommand(app).Run(ctx, io, nil) error = %v, want nil", err)
 	}
 
-	want := "METHOD  PATTERN\nPOST    /posts\nGET     /posts/{id}\n"
+	want := "METHOD  PATTERN\nPOST    /posts\nGET     /posts/{id}\nHEAD    /posts/{id}\n"
 	if stdout.String() != want {
 		t.Errorf("RoutesCommand(app).Run(ctx, io, nil) stdout = %q, want %q", stdout.String(), want)
 	}

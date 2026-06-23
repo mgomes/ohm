@@ -53,6 +53,84 @@ func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
 	}
 }
 
+func TestAppGetHandlesHeadWithoutBody(t *testing.T) {
+	app := New()
+	app.Get("/hello", func(req *Request) error {
+		if req.HTTPRequest().Method != http.MethodHead {
+			t.Errorf("Request.HTTPRequest().Method = %q, want %q", req.HTTPRequest().Method, http.MethodHead)
+		}
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/plain; charset=utf-8")
+	}
+	if res.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.Body.Len())
+	}
+}
+
+func TestAppHeadOverridesGetHeadFallback(t *testing.T) {
+	app := New()
+	app.Get("/hello", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "get")
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+	app.Head("/hello", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "head")
+		req.ResponseWriter().WriteHeader(http.StatusNoContent)
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("X-Handler"); got != "head" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Handler = %q, want %q", request.Method, request.URL.Path, got, "head")
+	}
+}
+
+func TestAppGetDoesNotOverrideExistingHeadHandler(t *testing.T) {
+	app := New()
+	app.Head("/hello", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "head")
+		req.ResponseWriter().WriteHeader(http.StatusNoContent)
+		return nil
+	})
+	app.Get("/hello", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "get")
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("X-Handler"); got != "head" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Handler = %q, want %q", request.Method, request.URL.Path, got, "head")
+	}
+}
+
 func TestAppDefaultErrorHandlerRendersHTTPError(t *testing.T) {
 	app := New()
 	app.Get("/missing", func(req *Request) error {
@@ -583,6 +661,7 @@ func TestAppRoutesReturnsRegisteredRoutes(t *testing.T) {
 
 	want := []Route{
 		{Method: http.MethodGet, Pattern: "/posts"},
+		{Method: http.MethodHead, Pattern: "/posts"},
 		{Method: http.MethodPost, Pattern: "/posts"},
 	}
 	if len(got) != len(want) {
@@ -622,6 +701,9 @@ func TestAppStaticServesGetAndHead(t *testing.T) {
 
 	if headResponse.Code != http.StatusOK {
 		t.Errorf("App.Static(%q, %q) HEAD status = %d, want %d", "/assets/*", staticRoot, headResponse.Code, http.StatusOK)
+	}
+	if headResponse.Body.Len() != 0 {
+		t.Errorf("App.Static(%q, %q) HEAD body length = %d, want 0", "/assets/*", staticRoot, headResponse.Body.Len())
 	}
 }
 
@@ -698,7 +780,7 @@ func TestAllowedMethodsNormalizesGenericHandleMethod(t *testing.T) {
 	})
 
 	got := app.AllowedMethods("/posts")
-	want := []string{http.MethodGet}
+	want := []string{http.MethodGet, http.MethodHead}
 
 	if !slices.Equal(got, want) {
 		t.Errorf("App.AllowedMethods(%q) = %v, want %v", "/posts", got, want)
