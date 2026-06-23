@@ -156,8 +156,8 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = withNewResponseStatus(r)
 	if r.Method == http.MethodHead {
 		writer, state := newHeadResponseWriter(w)
+		defer state.finish()
 		a.router.ServeHTTP(writer, r)
-		state.finish()
 		return
 	}
 	a.router.ServeHTTP(w, r)

@@ -260,6 +260,33 @@ func TestAppGetDoesNotOverrideExistingHeadHandler(t *testing.T) {
 	}
 }
 
+func TestAppHeadFallbackCommitsBufferedHeadersDuringPanic(t *testing.T) {
+	app := New()
+	app.GetHTTP("/panic", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Before-Panic", "yes")
+		w.WriteHeader(http.StatusAccepted)
+		panic("boom")
+	}))
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/panic", nil)
+
+	recoverUncommittedResponses(app.HTTPHandler()).ServeHTTP(res, request)
+
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusAccepted)
+	}
+	if got := res.Header().Get("X-Before-Panic"); got != "yes" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Before-Panic = %q, want %q", request.Method, request.URL.Path, got, "yes")
+	}
+	if got := res.Header().Get("X-Recovered"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Recovered = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if res.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.Body.Len())
+	}
+}
+
 func TestAppDefaultErrorHandlerRendersHTTPError(t *testing.T) {
 	app := New()
 	app.Get("/missing", func(req *Request) error {
@@ -983,6 +1010,35 @@ func (w *transformingMiddlewareWriter) Write(body []byte) (int, error) {
 		return n, err
 	}
 	return len(body), nil
+}
+
+func recoverUncommittedResponses(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracked := &commitTrackingWriter{ResponseWriter: w}
+		defer func() {
+			if recover() == nil || tracked.committed {
+				return
+			}
+			tracked.Header().Set("X-Recovered", "yes")
+			http.Error(tracked, "recovered", http.StatusInternalServerError)
+		}()
+		next.ServeHTTP(tracked, r)
+	})
+}
+
+type commitTrackingWriter struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (w *commitTrackingWriter) WriteHeader(status int) {
+	w.committed = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *commitTrackingWriter) Write(body []byte) (int, error) {
+	w.committed = true
+	return w.ResponseWriter.Write(body)
 }
 
 func (r *allowedMethodRoutes) Routes() []chi.Route {
