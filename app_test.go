@@ -260,6 +260,37 @@ func TestAppGetDoesNotOverrideExistingHeadHandler(t *testing.T) {
 	}
 }
 
+func TestAppGetDoesNotOverrideExistingHeadHandlerWithRenamedParam(t *testing.T) {
+	app := New()
+	app.Head("/posts/{postID}", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "head")
+		req.ResponseWriter().Header().Set("X-Post-ID", req.Param("postID"))
+		req.ResponseWriter().WriteHeader(http.StatusNoContent)
+		return nil
+	})
+	app.Get("/posts/{id}", func(req *Request) error {
+		req.ResponseWriter().Header().Set("X-Handler", "get")
+		req.ResponseWriter().Header().Set("X-Post-ID", req.Param("id"))
+		req.PlainText(http.StatusOK, "post")
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/posts/42", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusNoContent)
+	}
+	if got := res.Header().Get("X-Handler"); got != "head" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Handler = %q, want %q", request.Method, request.URL.Path, got, "head")
+	}
+	if got := res.Header().Get("X-Post-ID"); got != "42" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Post-ID = %q, want %q", request.Method, request.URL.Path, got, "42")
+	}
+}
+
 func TestAppHeadFallbackCommitsBufferedHeadersDuringPanic(t *testing.T) {
 	app := New()
 	app.GetHTTP("/panic", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

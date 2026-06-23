@@ -233,15 +233,79 @@ func (a *App) addExplicitHeadRoute(pattern string) {
 	if a.explicitHeadRoutes == nil {
 		a.explicitHeadRoutes = make(map[string]struct{})
 	}
-	a.explicitHeadRoutes[pattern] = struct{}{}
+	a.explicitHeadRoutes[routePatternShape(pattern)] = struct{}{}
 }
 
 func (a *App) hasExplicitHeadRoute(pattern string) bool {
 	if a.explicitHeadRoutes == nil {
 		return false
 	}
-	_, ok := a.explicitHeadRoutes[pattern]
+	_, ok := a.explicitHeadRoutes[routePatternShape(pattern)]
 	return ok
+}
+
+func routePatternShape(pattern string) string {
+	var shape strings.Builder
+	for len(pattern) > 0 {
+		paramStart := strings.Index(pattern, "{")
+		wildcardStart := strings.Index(pattern, "*")
+		if paramStart < 0 && wildcardStart < 0 {
+			shape.WriteString(pattern)
+			return shape.String()
+		}
+		if wildcardStart >= 0 && (paramStart < 0 || wildcardStart < paramStart) {
+			shape.WriteString(pattern[:wildcardStart+1])
+			return shape.String()
+		}
+
+		shape.WriteString(pattern[:paramStart])
+		paramEnd := routeParamEnd(pattern[paramStart:])
+		if paramEnd < 0 {
+			shape.WriteString(pattern[paramStart:])
+			return shape.String()
+		}
+
+		param := pattern[paramStart+1 : paramStart+paramEnd]
+		_, rexpat, hasRegexp := strings.Cut(param, ":")
+		if !hasRegexp {
+			shape.WriteString("{}")
+		} else {
+			shape.WriteString("{:")
+			shape.WriteString(normalizeRouteRegexp(rexpat))
+			shape.WriteString("}")
+		}
+		pattern = pattern[paramStart+paramEnd+1:]
+	}
+	return shape.String()
+}
+
+func routeParamEnd(pattern string) int {
+	depth := 0
+	for i, r := range pattern {
+		switch r {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func normalizeRouteRegexp(rexpat string) string {
+	if rexpat == "" {
+		return rexpat
+	}
+	if rexpat[0] != '^' {
+		rexpat = "^" + rexpat
+	}
+	if rexpat[len(rexpat)-1] != '$' {
+		rexpat += "$"
+	}
+	return rexpat
 }
 
 func staticPrefix(pattern string) string {
