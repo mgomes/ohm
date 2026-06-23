@@ -192,6 +192,8 @@ func TestRequestDecodeRejectsMalformedClientInputAsBadRequest(t *testing.T) {
 	}{
 		{name: "malformed JSON", contentType: "application/json", body: `{"title":`},
 		{name: "empty JSON", contentType: "application/json", body: ""},
+		{name: "trailing JSON value", contentType: "application/json", body: `{"title":"hello"}{"title":"again"}`},
+		{name: "trailing XML value", contentType: "application/xml", body: `<formPayload><Title>hello</Title></formPayload><formPayload><Title>again</Title></formPayload>`},
 		{name: "unsupported content type", contentType: "text/plain", body: "title=hello"},
 		{name: "malformed form", contentType: "application/x-www-form-urlencoded", body: "title=%zz"},
 		{name: "unknown form field", contentType: "application/x-www-form-urlencoded", body: "unknown=hello"},

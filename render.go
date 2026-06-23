@@ -181,13 +181,13 @@ func decodeRequest(r *http.Request, v any) error {
 	switch requestContentType(r) {
 	case contentTypeJSON:
 		defer drainBody(r.Body)
-		if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		if err := decodeJSONBody(r.Body, v); err != nil {
 			return decodeClientInputError(err)
 		}
 		return nil
 	case contentTypeXML:
 		defer drainBody(r.Body)
-		if err := xml.NewDecoder(r.Body).Decode(v); err != nil {
+		if err := decodeXMLBody(r.Body, v); err != nil {
 			return decodeClientInputError(err)
 		}
 		return nil
@@ -201,6 +201,40 @@ func decodeRequest(r *http.Request, v any) error {
 		return nil
 	default:
 		return decodeClientInputError(errors.New("ohm: unable to automatically decode the request content type"))
+	}
+}
+
+func decodeJSONBody(body io.Reader, v any) error {
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	if token, err := decoder.Token(); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("ohm: JSON request body must contain exactly one value; found trailing token %v", token)
+	}
+	return nil
+}
+
+func decodeXMLBody(body io.Reader, v any) error {
+	decoder := xml.NewDecoder(body)
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if data, ok := token.(xml.CharData); ok && strings.TrimSpace(string(data)) == "" {
+			continue
+		}
+		return fmt.Errorf("ohm: XML request body must contain exactly one value; found trailing token %T", token)
 	}
 }
 
