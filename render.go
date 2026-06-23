@@ -231,10 +231,21 @@ func decodeXMLBody(body io.Reader, v any) error {
 		if err != nil {
 			return err
 		}
-		if data, ok := token.(xml.CharData); ok && strings.TrimSpace(string(data)) == "" {
+		if isXMLDocumentEpilogToken(token) {
 			continue
 		}
 		return fmt.Errorf("ohm: XML request body must contain exactly one value; found trailing token %T", token)
+	}
+}
+
+func isXMLDocumentEpilogToken(token xml.Token) bool {
+	switch token := token.(type) {
+	case xml.CharData:
+		return strings.TrimSpace(string(token)) == ""
+	case xml.Comment, xml.ProcInst:
+		return true
+	default:
+		return false
 	}
 }
 

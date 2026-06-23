@@ -223,6 +223,36 @@ func TestRequestDecodeRejectsMalformedClientInputAsBadRequest(t *testing.T) {
 	}
 }
 
+func TestRequestDecodeAllowsXMLEpilogTrivia(t *testing.T) {
+	app := New()
+	app.Post("/posts", func(req *Request) error {
+		var payload formPayload
+		if err := req.Decode(&payload); err != nil {
+			return err
+		}
+		req.JSON(http.StatusOK, payload)
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(`<formPayload><Title>hello</Title></formPayload><!--generated--><?source test?>`))
+	request.Header.Set("Content-Type", "application/xml")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+
+	var got formPayload
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("json.Decode(response body) error = %v, want nil", err)
+	}
+	if got.Title != "hello" {
+		t.Errorf("Request.Decode(xml).Title = %q, want %q", got.Title, "hello")
+	}
+}
+
 func TestRequestBindDecodeErrorPreservesUnderlyingError(t *testing.T) {
 	var gotErr error
 	app := New(WithErrorHandler(func(req *Request, err error) {

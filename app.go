@@ -260,20 +260,65 @@ func (a *App) adapt(handler Handler) http.Handler {
 
 func discardResponseBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(headResponseWriter{ResponseWriter: w}, r)
+		next.ServeHTTP(&headResponseWriter{ResponseWriter: w}, r)
 	})
 }
 
 type headResponseWriter struct {
 	http.ResponseWriter
+	status      int
+	wroteHeader bool
 }
 
-func (w headResponseWriter) Write(body []byte) (int, error) {
+func (w *headResponseWriter) Write(body []byte) (int, error) {
+	if !w.wroteHeader {
+		w.sniffContentType(body)
+		w.WriteHeader(http.StatusOK)
+	}
+	if !statusAllowsResponseBody(w.status) {
+		return 0, http.ErrBodyNotAllowed
+	}
 	return len(body), nil
 }
 
-func (w headResponseWriter) Unwrap() http.ResponseWriter {
+func (w *headResponseWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.status = status
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *headResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
+}
+
+func (w *headResponseWriter) sniffContentType(body []byte) {
+	if len(body) == 0 {
+		return
+	}
+	header := w.Header()
+	if _, ok := header["Content-Type"]; ok {
+		return
+	}
+	if header.Get("Content-Encoding") != "" || header.Get("Transfer-Encoding") != "" {
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(body))
+}
+
+func statusAllowsResponseBody(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	default:
+		return true
+	}
 }
 
 // Route describes one registered route.

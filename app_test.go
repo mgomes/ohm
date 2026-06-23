@@ -79,6 +79,39 @@ func TestAppGetHandlesHeadWithoutBody(t *testing.T) {
 	}
 }
 
+func TestAppGetHeadFallbackPreservesImplicitWriteHeaders(t *testing.T) {
+	app := New()
+	app.GetHTTP("/raw", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<main>hello</main>"))
+	}))
+
+	getResponse := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(http.MethodGet, "/raw", nil)
+	app.ServeHTTP(getResponse, getRequest)
+
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", getRequest.Method, getRequest.URL.Path, getResponse.Code, http.StatusOK)
+	}
+	wantContentType := getResponse.Header().Get("Content-Type")
+	if wantContentType == "" {
+		t.Fatalf("App.ServeHTTP(%s %s) Content-Type is empty, want inferred type", getRequest.Method, getRequest.URL.Path)
+	}
+
+	headResponse := httptest.NewRecorder()
+	headRequest := httptest.NewRequest(http.MethodHead, "/raw", nil)
+	app.ServeHTTP(headResponse, headRequest)
+
+	if headResponse.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", headRequest.Method, headRequest.URL.Path, headResponse.Code, http.StatusOK)
+	}
+	if got := headResponse.Header().Get("Content-Type"); got != wantContentType {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", headRequest.Method, headRequest.URL.Path, got, wantContentType)
+	}
+	if headResponse.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", headRequest.Method, headRequest.URL.Path, headResponse.Body.Len())
+	}
+}
+
 func TestAppHeadOverridesGetHeadFallback(t *testing.T) {
 	app := New()
 	app.Get("/hello", func(req *Request) error {
