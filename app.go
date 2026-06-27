@@ -25,13 +25,39 @@ type ErrorHandler func(*Request, error)
 // MethodNotAllowedHandler handles requests whose path matches other methods.
 type MethodNotAllowedHandler func(http.ResponseWriter, *http.Request, []string)
 
+// MethodAny is reported for routes that match every request method.
+const MethodAny = "ANY"
+
+const anyRouteMethod = "OHM_ANY"
+
+var anyRouteMethods = []string{
+	http.MethodConnect,
+	http.MethodDelete,
+	http.MethodGet,
+	http.MethodHead,
+	http.MethodOptions,
+	http.MethodPatch,
+	http.MethodPost,
+	http.MethodPut,
+	http.MethodTrace,
+}
+
+func init() {
+	chi.RegisterMethod(anyRouteMethod)
+}
+
 // App is an Ohm HTTP application.
 type App struct {
-	router             chi.Router
-	errorHandler       ErrorHandler
-	requestBodyLimit   int64
-	routeMethods       []string
-	explicitHeadRoutes map[string]struct{}
+	router               chi.Router
+	errorHandler         ErrorHandler
+	requestBodyLimit     int64
+	routeMethods         []string
+	middlewares          []Middleware
+	explicitHeadRoutes   map[string]struct{}
+	explicitRouteMethods map[string]map[string]struct{}
+	hasAnyRoutes         bool
+	anyRoutePatterns     map[string]struct{}
+	routerPrepared       bool
 }
 
 // Option configures an App.
@@ -72,9 +98,10 @@ func New(opts ...Option) *App {
 
 // Use appends middleware to the app router.
 func (a *App) Use(middlewares ...Middleware) {
-	for _, middleware := range middlewares {
-		a.router.Use(middleware)
+	if a.routerPrepared {
+		panic("chi: all middlewares must be defined before routes on a mux")
 	}
+	a.middlewares = append(a.middlewares, middlewares...)
 }
 
 // Handle registers handler for method and pattern.
@@ -84,9 +111,11 @@ func (a *App) Handle(method string, pattern string, handler Handler) {
 
 // HandleHTTP registers handler for method and pattern.
 func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
+	a.prepareRouter()
 	method = strings.ToUpper(method)
 	a.router.Method(method, pattern, handler)
 	a.addRouteMethod(method)
+	a.addExplicitRouteMethod(pattern, method)
 	if method == http.MethodHead {
 		a.addExplicitHeadRoute(pattern)
 		return
@@ -97,7 +126,27 @@ func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
 		}
 		a.router.Method(http.MethodHead, pattern, handler)
 		a.addRouteMethod(http.MethodHead)
+		a.addExplicitRouteMethod(pattern, http.MethodHead)
 	}
+}
+
+// Any registers handler for all request methods.
+func (a *App) Any(pattern string, handler Handler) {
+	a.AnyHTTP(pattern, a.adapt(handler))
+}
+
+// AnyHTTP registers handler for all request methods.
+func (a *App) AnyHTTP(pattern string, handler http.Handler) {
+	a.prepareRouter()
+	a.router.Method(anyRouteMethod, pattern, handler)
+	for _, method := range anyRouteMethods {
+		if a.hasExplicitRouteMethod(pattern, method) {
+			continue
+		}
+		a.router.Method(method, pattern, handler)
+	}
+	a.hasAnyRoutes = true
+	a.addAnyRoutePattern(pattern)
 }
 
 // Get registers a GET route.
@@ -188,6 +237,11 @@ func (a *App) HTTPHandler() http.Handler {
 func (a *App) Routes() ([]Route, error) {
 	var routes []Route
 	if err := chi.Walk(a.router, func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if method == anyRouteMethod {
+			method = MethodAny
+		} else if a.isAnyRoutePattern(route) && !a.hasExplicitRouteMethod(route, method) {
+			return nil
+		}
 		routes = append(routes, Route{
 			Method:  method,
 			Pattern: route,
@@ -215,9 +269,128 @@ func (a *App) Routes() ([]Route, error) {
 	return routes, nil
 }
 
+func (a *App) prepareRouter() {
+	if a.routerPrepared {
+		return
+	}
+	for _, middleware := range a.middlewares {
+		a.router.Use(middleware)
+	}
+	a.router.Use(a.anyRouteMiddleware)
+	a.routerPrepared = true
+}
+
+func (a *App) anyRouteMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.matchesAnyRoute(r) {
+			r = withRouteMethod(r, a.router, anyRouteMethod)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // AllowedMethods returns HTTP methods that match path.
 func (a *App) AllowedMethods(path string) []string {
+	if a.matchesAnyRoutePath(path) {
+		return []string{MethodAny}
+	}
 	return allowedMethods(a.router, a.routeMethods, path)
+}
+
+func (a *App) matchesAnyRoute(r *http.Request) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	path := requestRoutePath(r)
+	if a.matchesRouteMethod(requestRouteMethod(r), path) {
+		return false
+	}
+	return a.matchesAnyRoutePath(path)
+}
+
+func (a *App) matchesAnyRoutePath(path string) bool {
+	if !a.hasAnyRoutes {
+		return false
+	}
+	ctx := chi.NewRouteContext()
+	return a.router.Match(ctx, anyRouteMethod, path)
+}
+
+func (a *App) matchesRouteMethod(method string, path string) bool {
+	ctx := chi.NewRouteContext()
+	return a.router.Match(ctx, method, path)
+}
+
+func (a *App) addAnyRoutePattern(pattern string) {
+	if a.anyRoutePatterns == nil {
+		a.anyRoutePatterns = make(map[string]struct{})
+	}
+	a.anyRoutePatterns[routePatternShape(pattern)] = struct{}{}
+}
+
+func (a *App) isAnyRoutePattern(pattern string) bool {
+	if a.anyRoutePatterns == nil {
+		return false
+	}
+	_, ok := a.anyRoutePatterns[routePatternShape(pattern)]
+	return ok
+}
+
+func (a *App) addExplicitRouteMethod(pattern string, method string) {
+	if a.explicitRouteMethods == nil {
+		a.explicitRouteMethods = make(map[string]map[string]struct{})
+	}
+	shape := routePatternShape(pattern)
+	methods := a.explicitRouteMethods[shape]
+	if methods == nil {
+		methods = make(map[string]struct{})
+		a.explicitRouteMethods[shape] = methods
+	}
+	methods[strings.ToUpper(method)] = struct{}{}
+}
+
+func (a *App) hasExplicitRouteMethod(pattern string, method string) bool {
+	if a.explicitRouteMethods == nil {
+		return false
+	}
+	methods := a.explicitRouteMethods[routePatternShape(pattern)]
+	if methods == nil {
+		return false
+	}
+	_, ok := methods[strings.ToUpper(method)]
+	return ok
+}
+
+func withRouteMethod(r *http.Request, routes chi.Routes, method string) *http.Request {
+	if ctx := routeContext(r); ctx != nil {
+		ctx.Routes = routes
+		ctx.RouteMethod = method
+		return r
+	}
+	ctx := chi.NewRouteContext()
+	ctx.Routes = routes
+	ctx.RouteMethod = method
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, ctx))
+}
+
+func requestRoutePath(r *http.Request) string {
+	if ctx := routeContext(r); ctx != nil && ctx.RoutePath != "" {
+		return ctx.RoutePath
+	}
+	if r.URL.RawPath != "" {
+		return r.URL.RawPath
+	}
+	if r.URL.Path != "" {
+		return r.URL.Path
+	}
+	return "/"
+}
+
+func requestRouteMethod(r *http.Request) string {
+	if ctx := routeContext(r); ctx != nil && ctx.RouteMethod != "" {
+		return ctx.RouteMethod
+	}
+	return r.Method
 }
 
 func allowedMethods(routes chi.Routes, methods []string, path string) []string {
