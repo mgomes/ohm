@@ -53,6 +53,59 @@ func TestAppRoutesRequestsThroughOhmHandler(t *testing.T) {
 	}
 }
 
+func TestAppAnyRoutesRequestsThroughOhmHandler(t *testing.T) {
+	app := New()
+	app.Any("/proxy/{id}/*", func(req *Request) error {
+		req.PlainText(http.StatusOK, req.HTTPRequest().Method+" "+req.Param("id")+" "+req.RoutePattern())
+		return nil
+	})
+
+	tests := []struct {
+		method string
+	}{
+		{method: http.MethodGet},
+		{method: http.MethodPost},
+		{method: "PROPFIND"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			res := httptest.NewRecorder()
+			request := httptest.NewRequest(tt.method, "/proxy/tun/webhooks/stripe", nil)
+
+			app.ServeHTTP(res, request)
+
+			if res.Code != http.StatusOK {
+				t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+			}
+			want := tt.method + " tun /proxy/{id}/*"
+			if res.Body.String() != want {
+				t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), want)
+			}
+		})
+	}
+}
+
+func TestAppAnyHTTPPreservesRequestMethod(t *testing.T) {
+	app := New()
+	app.AnyHTTP("/raw", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(r.Method))
+	}))
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest("PROPFIND", "/raw", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusAccepted)
+	}
+	if res.Body.String() != "PROPFIND" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "PROPFIND")
+	}
+}
+
 func TestAppGetHandlesHeadWithoutBody(t *testing.T) {
 	app := New()
 	app.Get("/hello", func(req *Request) error {
@@ -73,6 +126,32 @@ func TestAppGetHandlesHeadWithoutBody(t *testing.T) {
 	}
 	if got := res.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
 		t.Errorf("App.ServeHTTP(%s %s) Content-Type = %q, want %q", request.Method, request.URL.Path, got, "text/plain; charset=utf-8")
+	}
+	if got := res.Header().Get("Content-Length"); got != "5" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "5")
+	}
+	if res.Body.Len() != 0 {
+		t.Errorf("App.ServeHTTP(%s %s) body length = %d, want 0", request.Method, request.URL.Path, res.Body.Len())
+	}
+}
+
+func TestAppAnyHandlesHeadWithoutBody(t *testing.T) {
+	app := New()
+	app.Any("/hello", func(req *Request) error {
+		if req.HTTPRequest().Method != http.MethodHead {
+			t.Errorf("Request.HTTPRequest().Method = %q, want %q", req.HTTPRequest().Method, http.MethodHead)
+		}
+		req.PlainText(http.StatusOK, "hello")
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/hello", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
 	}
 	if got := res.Header().Get("Content-Length"); got != "5" {
 		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, "5")
@@ -899,6 +978,9 @@ func TestAppRoutesReturnsRegisteredRoutes(t *testing.T) {
 	app.Post("/posts", func(req *Request) error {
 		return nil
 	})
+	app.Any("/proxy/*", func(req *Request) error {
+		return nil
+	})
 
 	got, err := app.Routes()
 	if err != nil {
@@ -909,6 +991,7 @@ func TestAppRoutesReturnsRegisteredRoutes(t *testing.T) {
 		{Method: http.MethodGet, Pattern: "/posts"},
 		{Method: http.MethodHead, Pattern: "/posts"},
 		{Method: http.MethodPost, Pattern: "/posts"},
+		{Method: MethodAny, Pattern: "/proxy/*"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("App.Routes() = %v, want %v", got, want)
@@ -1016,6 +1099,20 @@ func TestAllowedMethodsReturnsMatchingRouteMethods(t *testing.T) {
 
 	if !slices.Equal(got, want) {
 		t.Errorf("App.AllowedMethods(%q) = %v, want %v", "/assets/app.css", got, want)
+	}
+}
+
+func TestAllowedMethodsReturnsAnyForMethodAgnosticRoutes(t *testing.T) {
+	app := New()
+	app.Any("/proxy/*", func(req *Request) error {
+		return nil
+	})
+
+	got := app.AllowedMethods("/proxy/webhooks/stripe")
+	want := []string{MethodAny}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("App.AllowedMethods(%q) = %v, want %v", "/proxy/webhooks/stripe", got, want)
 	}
 }
 
