@@ -106,6 +106,53 @@ func TestAppAnyHTTPPreservesRequestMethod(t *testing.T) {
 	}
 }
 
+func TestAppAnyRoutesPreserveMountedRoutePath(t *testing.T) {
+	app := New()
+	app.Any("/proxy/*", func(req *Request) error {
+		req.PlainText(http.StatusOK, req.HTTPRequest().Method+" "+req.RoutePattern())
+		return nil
+	})
+
+	parent := chi.NewRouter()
+	parent.Mount("/api", app.HTTPHandler())
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/proxy/webhooks/stripe", nil)
+
+	parent.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("parent.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if res.Body.String() != "POST /api/proxy/*" {
+		t.Errorf("parent.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "POST /api/proxy/*")
+	}
+}
+
+func TestAppAnyDoesNotShadowMatchingMethodRoute(t *testing.T) {
+	app := New()
+	app.Get("/health", func(req *Request) error {
+		req.PlainText(http.StatusOK, "health")
+		return nil
+	})
+	app.Any("/*", func(req *Request) error {
+		req.PlainText(http.StatusOK, "proxy")
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if res.Body.String() != "health" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "health")
+	}
+}
+
 func TestAppGetHandlesHeadWithoutBody(t *testing.T) {
 	app := New()
 	app.Get("/hello", func(req *Request) error {

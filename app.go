@@ -254,7 +254,11 @@ func (a *App) matchesAnyRoute(r *http.Request) bool {
 	if r == nil || r.URL == nil {
 		return false
 	}
-	return a.matchesAnyRoutePath(requestRoutePath(r))
+	path := requestRoutePath(r)
+	if a.matchesRouteMethod(r.Method, path) {
+		return false
+	}
+	return a.matchesAnyRoutePath(path)
 }
 
 func (a *App) matchesAnyRoutePath(path string) bool {
@@ -265,7 +269,17 @@ func (a *App) matchesAnyRoutePath(path string) bool {
 	return a.router.Match(ctx, anyRouteMethod, path)
 }
 
+func (a *App) matchesRouteMethod(method string, path string) bool {
+	ctx := chi.NewRouteContext()
+	return a.router.Match(ctx, method, path)
+}
+
 func withRouteMethod(r *http.Request, routes chi.Routes, method string) *http.Request {
+	if ctx := routeContext(r); ctx != nil {
+		ctx.Routes = routes
+		ctx.RouteMethod = method
+		return r
+	}
 	ctx := chi.NewRouteContext()
 	ctx.Routes = routes
 	ctx.RouteMethod = method
@@ -273,6 +287,9 @@ func withRouteMethod(r *http.Request, routes chi.Routes, method string) *http.Re
 }
 
 func requestRoutePath(r *http.Request) string {
+	if ctx := routeContext(r); ctx != nil && ctx.RoutePath != "" {
+		return ctx.RoutePath
+	}
 	if r.URL.RawPath != "" {
 		return r.URL.RawPath
 	}
