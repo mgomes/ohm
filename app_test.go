@@ -155,6 +155,42 @@ func TestAppAnyDoesNotShadowMatchingMethodRoute(t *testing.T) {
 	}
 }
 
+func TestAppAnyDoesNotShadowMethodFallbackRoute(t *testing.T) {
+	app := New()
+	app.Get("/*", func(req *Request) error {
+		req.PlainText(http.StatusOK, "get-fallback")
+		return nil
+	})
+	app.Any("/webhook", func(req *Request) error {
+		req.PlainText(http.StatusOK, req.HTTPRequest().Method)
+		return nil
+	})
+
+	getResponse := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(http.MethodGet, "/webhook", nil)
+
+	app.ServeHTTP(getResponse, getRequest)
+
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", getRequest.Method, getRequest.URL.Path, getResponse.Code, http.StatusOK)
+	}
+	if getResponse.Body.String() != "get-fallback" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", getRequest.Method, getRequest.URL.Path, getResponse.Body.String(), "get-fallback")
+	}
+
+	propfindResponse := httptest.NewRecorder()
+	propfindRequest := httptest.NewRequest("PROPFIND", "/webhook", nil)
+
+	app.ServeHTTP(propfindResponse, propfindRequest)
+
+	if propfindResponse.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", propfindRequest.Method, propfindRequest.URL.Path, propfindResponse.Code, http.StatusOK)
+	}
+	if propfindResponse.Body.String() != "PROPFIND" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", propfindRequest.Method, propfindRequest.URL.Path, propfindResponse.Body.String(), "PROPFIND")
+	}
+}
+
 func TestAppAnyDoesNotReplaceExistingMethodRoute(t *testing.T) {
 	app := New()
 	app.Get("/health", func(req *Request) error {
