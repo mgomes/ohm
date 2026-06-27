@@ -155,6 +155,42 @@ func TestAppAnyDoesNotShadowMatchingMethodRoute(t *testing.T) {
 	}
 }
 
+func TestAppAnyDoesNotReplaceExistingMethodRoute(t *testing.T) {
+	app := New()
+	app.Get("/health", func(req *Request) error {
+		req.PlainText(http.StatusOK, "health")
+		return nil
+	})
+	app.Any("/health", func(req *Request) error {
+		req.PlainText(http.StatusOK, "proxy")
+		return nil
+	})
+
+	getResponse := httptest.NewRecorder()
+	getRequest := httptest.NewRequest(http.MethodGet, "/health", nil)
+
+	app.ServeHTTP(getResponse, getRequest)
+
+	if getResponse.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", getRequest.Method, getRequest.URL.Path, getResponse.Code, http.StatusOK)
+	}
+	if getResponse.Body.String() != "health" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", getRequest.Method, getRequest.URL.Path, getResponse.Body.String(), "health")
+	}
+
+	postResponse := httptest.NewRecorder()
+	postRequest := httptest.NewRequest(http.MethodPost, "/health", nil)
+
+	app.ServeHTTP(postResponse, postRequest)
+
+	if postResponse.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", postRequest.Method, postRequest.URL.Path, postResponse.Code, http.StatusOK)
+	}
+	if postResponse.Body.String() != "proxy" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", postRequest.Method, postRequest.URL.Path, postResponse.Body.String(), "proxy")
+	}
+}
+
 func TestAppAnyRoutesAfterMiddlewareRewritesPath(t *testing.T) {
 	app := New()
 	app.Use(func(next http.Handler) http.Handler {
@@ -1067,6 +1103,35 @@ func TestAppRoutesReturnsRegisteredRoutes(t *testing.T) {
 		{Method: http.MethodHead, Pattern: "/posts"},
 		{Method: http.MethodPost, Pattern: "/posts"},
 		{Method: MethodAny, Pattern: "/proxy/*"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("App.Routes() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("App.Routes()[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestAppRoutesReturnsExplicitMethodsAlongsideAnyRoutes(t *testing.T) {
+	app := New()
+	app.Any("/proxy", func(req *Request) error {
+		return nil
+	})
+	app.Get("/proxy", func(req *Request) error {
+		return nil
+	})
+
+	got, err := app.Routes()
+	if err != nil {
+		t.Fatalf("App.Routes() error = %v, want nil", err)
+	}
+
+	want := []Route{
+		{Method: MethodAny, Pattern: "/proxy"},
+		{Method: http.MethodGet, Pattern: "/proxy"},
+		{Method: http.MethodHead, Pattern: "/proxy"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("App.Routes() = %v, want %v", got, want)

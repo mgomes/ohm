@@ -48,15 +48,16 @@ func init() {
 
 // App is an Ohm HTTP application.
 type App struct {
-	router             chi.Router
-	errorHandler       ErrorHandler
-	requestBodyLimit   int64
-	routeMethods       []string
-	middlewares        []Middleware
-	explicitHeadRoutes map[string]struct{}
-	hasAnyRoutes       bool
-	anyRoutePatterns   map[string]struct{}
-	routerPrepared     bool
+	router               chi.Router
+	errorHandler         ErrorHandler
+	requestBodyLimit     int64
+	routeMethods         []string
+	middlewares          []Middleware
+	explicitHeadRoutes   map[string]struct{}
+	explicitRouteMethods map[string]map[string]struct{}
+	hasAnyRoutes         bool
+	anyRoutePatterns     map[string]struct{}
+	routerPrepared       bool
 }
 
 // Option configures an App.
@@ -114,6 +115,7 @@ func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
 	method = strings.ToUpper(method)
 	a.router.Method(method, pattern, handler)
 	a.addRouteMethod(method)
+	a.addExplicitRouteMethod(pattern, method)
 	if method == http.MethodHead {
 		a.addExplicitHeadRoute(pattern)
 		return
@@ -124,6 +126,7 @@ func (a *App) HandleHTTP(method string, pattern string, handler http.Handler) {
 		}
 		a.router.Method(http.MethodHead, pattern, handler)
 		a.addRouteMethod(http.MethodHead)
+		a.addExplicitRouteMethod(pattern, http.MethodHead)
 	}
 }
 
@@ -137,6 +140,9 @@ func (a *App) AnyHTTP(pattern string, handler http.Handler) {
 	a.prepareRouter()
 	a.router.Method(anyRouteMethod, pattern, handler)
 	for _, method := range anyRouteMethods {
+		if a.hasExplicitRouteMethod(pattern, method) {
+			continue
+		}
 		a.router.Method(method, pattern, handler)
 	}
 	a.hasAnyRoutes = true
@@ -233,7 +239,7 @@ func (a *App) Routes() ([]Route, error) {
 	if err := chi.Walk(a.router, func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		if method == anyRouteMethod {
 			method = MethodAny
-		} else if a.isAnyRoutePattern(route) {
+		} else if a.isAnyRoutePattern(route) && !a.hasExplicitRouteMethod(route, method) {
 			return nil
 		}
 		routes = append(routes, Route{
@@ -319,14 +325,39 @@ func (a *App) addAnyRoutePattern(pattern string) {
 	if a.anyRoutePatterns == nil {
 		a.anyRoutePatterns = make(map[string]struct{})
 	}
-	a.anyRoutePatterns[pattern] = struct{}{}
+	a.anyRoutePatterns[routePatternShape(pattern)] = struct{}{}
 }
 
 func (a *App) isAnyRoutePattern(pattern string) bool {
 	if a.anyRoutePatterns == nil {
 		return false
 	}
-	_, ok := a.anyRoutePatterns[pattern]
+	_, ok := a.anyRoutePatterns[routePatternShape(pattern)]
+	return ok
+}
+
+func (a *App) addExplicitRouteMethod(pattern string, method string) {
+	if a.explicitRouteMethods == nil {
+		a.explicitRouteMethods = make(map[string]map[string]struct{})
+	}
+	shape := routePatternShape(pattern)
+	methods := a.explicitRouteMethods[shape]
+	if methods == nil {
+		methods = make(map[string]struct{})
+		a.explicitRouteMethods[shape] = methods
+	}
+	methods[strings.ToUpper(method)] = struct{}{}
+}
+
+func (a *App) hasExplicitRouteMethod(pattern string, method string) bool {
+	if a.explicitRouteMethods == nil {
+		return false
+	}
+	methods := a.explicitRouteMethods[routePatternShape(pattern)]
+	if methods == nil {
+		return false
+	}
+	_, ok := methods[strings.ToUpper(method)]
 	return ok
 }
 
