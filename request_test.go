@@ -1415,6 +1415,91 @@ func TestRouteHelpersExposeMatchedRoute(t *testing.T) {
 	}
 }
 
+func TestRouteHelpersDecodeEscapedRouteParams(t *testing.T) {
+	app := New()
+	app.Get("/hooks/{id}/*", func(req *Request) error {
+		httpRequest := req.HTTPRequest()
+		req.JSON(http.StatusOK, map[string]any{
+			"param":    RouteParam(httpRequest, "id"),
+			"params":   RouteParams(httpRequest),
+			"path":     httpRequest.URL.Path,
+			"raw_path": httpRequest.URL.RawPath,
+		})
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/hooks/tun%5Fhooks/webhooks/a%2Fb", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+
+	var got struct {
+		Param   string            `json:"param"`
+		Params  map[string]string `json:"params"`
+		Path    string            `json:"path"`
+		RawPath string            `json:"raw_path"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("json.Decode(response body) error = %v, want nil", err)
+	}
+	if got.Param != "tun_hooks" {
+		t.Errorf("RouteParam(request, id) = %q, want %q", got.Param, "tun_hooks")
+	}
+	if got.Params["id"] != "tun_hooks" {
+		t.Errorf("RouteParams(request)[id] = %q, want %q", got.Params["id"], "tun_hooks")
+	}
+	if got.Path != "/hooks/tun_hooks/webhooks/a/b" {
+		t.Errorf("request.URL.Path = %q, want %q", got.Path, "/hooks/tun_hooks/webhooks/a/b")
+	}
+	if got.RawPath != "/hooks/tun%5Fhooks/webhooks/a%2Fb" {
+		t.Errorf("request.URL.RawPath = %q, want %q", got.RawPath, "/hooks/tun%5Fhooks/webhooks/a%2Fb")
+	}
+}
+
+func TestRouteHelpersPreserveAlreadyDecodedRouteParams(t *testing.T) {
+	app := New()
+	app.Get("/files/{id}", func(req *Request) error {
+		httpRequest := req.HTTPRequest()
+		req.JSON(http.StatusOK, map[string]any{
+			"param":    RouteParam(httpRequest, "id"),
+			"params":   RouteParams(httpRequest),
+			"raw_path": httpRequest.URL.RawPath,
+		})
+		return nil
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/files/a%252Fb", nil)
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, response.Code, http.StatusOK)
+	}
+
+	var got struct {
+		Param   string            `json:"param"`
+		Params  map[string]string `json:"params"`
+		RawPath string            `json:"raw_path"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatalf("json.Decode(response body) error = %v, want nil", err)
+	}
+	if got.Param != "a%2Fb" {
+		t.Errorf("RouteParam(request, id) = %q, want %q", got.Param, "a%2Fb")
+	}
+	if got.Params["id"] != "a%2Fb" {
+		t.Errorf("RouteParams(request)[id] = %q, want %q", got.Params["id"], "a%2Fb")
+	}
+	if got.RawPath != "" {
+		t.Errorf("request.URL.RawPath = %q, want empty", got.RawPath)
+	}
+}
+
 func TestRequestJSONDoesNotExposeMarshalErrors(t *testing.T) {
 	app := New()
 	app.Get("/bad-json", func(req *Request) error {
