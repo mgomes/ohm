@@ -107,6 +107,8 @@ func TestAppAnyHTTPPreservesRequestMethod(t *testing.T) {
 }
 
 func TestAppAnyRoutesPreserveMountedRoutePath(t *testing.T) {
+	chi.RegisterMethod("PROPFIND")
+
 	app := New()
 	app.Any("/proxy/*", func(req *Request) error {
 		req.PlainText(http.StatusOK, req.HTTPRequest().Method+" "+req.RoutePattern())
@@ -117,15 +119,15 @@ func TestAppAnyRoutesPreserveMountedRoutePath(t *testing.T) {
 	parent.Mount("/api", app.HTTPHandler())
 
 	res := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/proxy/webhooks/stripe", nil)
+	request := httptest.NewRequest("PROPFIND", "/api/proxy/webhooks/stripe", nil)
 
 	parent.ServeHTTP(res, request)
 
 	if res.Code != http.StatusOK {
 		t.Fatalf("parent.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
 	}
-	if res.Body.String() != "POST /api/proxy/*" {
-		t.Errorf("parent.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "POST /api/proxy/*")
+	if res.Body.String() != "PROPFIND /api/proxy/*" {
+		t.Errorf("parent.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "PROPFIND /api/proxy/*")
 	}
 }
 
@@ -150,6 +152,32 @@ func TestAppAnyDoesNotShadowMatchingMethodRoute(t *testing.T) {
 	}
 	if res.Body.String() != "health" {
 		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "health")
+	}
+}
+
+func TestAppAnyRoutesAfterMiddlewareRewritesPath(t *testing.T) {
+	app := New()
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimSuffix(r.URL.Path, "/")
+			next.ServeHTTP(w, r)
+		})
+	})
+	app.Any("/hello", func(req *Request) error {
+		req.PlainText(http.StatusOK, req.HTTPRequest().Method)
+		return nil
+	})
+
+	res := httptest.NewRecorder()
+	request := httptest.NewRequest("PROPFIND", "/hello/", nil)
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if res.Body.String() != "PROPFIND" {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, res.Body.String(), "PROPFIND")
 	}
 }
 
