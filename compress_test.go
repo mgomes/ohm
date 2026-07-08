@@ -137,6 +137,38 @@ func TestCompressGzipsTextXMLResponse(t *testing.T) {
 	}
 }
 
+func TestCompressNormalizesConfiguredContentTypes(t *testing.T) {
+	body := strings.Repeat("configured ", 24)
+
+	app := New()
+	app.Use(Compress(5, "text/plain; charset=utf-8"))
+	app.Get("/configured", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(body))
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/configured", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want %q", request.Method, request.URL.Path, got, "gzip")
+	}
+	if !hasVary(res.Header(), "Accept-Encoding") {
+		t.Errorf("App.ServeHTTP(%s %s) Vary = %v, want Accept-Encoding", request.Method, request.URL.Path, res.Header().Values("Vary"))
+	}
+	if got := readGzipBody(t, res.Body.Bytes()); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) decompressed body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
 func TestCompressGzipsWriteStringResponse(t *testing.T) {
 	body := strings.Repeat("string ", 32)
 

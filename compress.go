@@ -84,6 +84,10 @@ func newCompressConfig(level int, types []string) compressConfig {
 			config.wildcards[wildcard] = struct{}{}
 			continue
 		}
+		contentType = normalizeContentType(contentType)
+		if contentType == "" {
+			continue
+		}
 		config.types[contentType] = struct{}{}
 	}
 	return config
