@@ -142,6 +142,9 @@ func (s *compressResponseState) wrap(w http.ResponseWriter) http.ResponseWriter 
 			s.writeFunc = next
 			return s.Write
 		},
+		WriteString: func(httpsnoop.WriteStringFunc) httpsnoop.WriteStringFunc {
+			return s.WriteString
+		},
 		ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
 			return func(src io.Reader) (int64, error) {
 				return s.ReadFrom(next, src)
@@ -198,6 +201,10 @@ func (s *compressResponseState) Write(body []byte) (int, error) {
 
 	s.commitUncompressed(s.explicitHeader || s.status != http.StatusOK)
 	return s.writeFunc(body)
+}
+
+func (s *compressResponseState) WriteString(body string) (int, error) {
+	return s.Write([]byte(body))
 }
 
 func (s *compressResponseState) ReadFrom(next httpsnoop.ReadFromFunc, src io.Reader) (int64, error) {

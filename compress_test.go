@@ -137,6 +137,70 @@ func TestCompressGzipsTextXMLResponse(t *testing.T) {
 	}
 }
 
+func TestCompressGzipsWriteStringResponse(t *testing.T) {
+	body := strings.Repeat("string ", 32)
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/string", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, err := io.WriteString(w, body)
+		return err
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/string", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want %q", request.Method, request.URL.Path, got, "gzip")
+	}
+	if !hasVary(res.Header(), "Accept-Encoding") {
+		t.Errorf("App.ServeHTTP(%s %s) Vary = %v, want Accept-Encoding", request.Method, request.URL.Path, res.Header().Values("Vary"))
+	}
+	if got := readGzipBody(t, res.Body.Bytes()); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) decompressed body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
+func TestCompressSkipsWriteStringWhenGzipIsNotAccepted(t *testing.T) {
+	body := "string body"
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/string", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, err := io.WriteString(w, body)
+		return err
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/string", nil)
+	request.Header.Set("Accept-Encoding", "br")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if !hasVary(res.Header(), "Accept-Encoding") {
+		t.Errorf("App.ServeHTTP(%s %s) Vary = %v, want Accept-Encoding", request.Method, request.URL.Path, res.Header().Values("Vary"))
+	}
+	if got := res.Body.String(); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
 func TestCompressSkipsRangeResponses(t *testing.T) {
 	body := "part"
 
