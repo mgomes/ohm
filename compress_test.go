@@ -1,9 +1,11 @@
 package ohm
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -468,6 +470,43 @@ func TestCompressFreezesHeadersAtWriteHeader(t *testing.T) {
 	}
 }
 
+func TestCompressAllowsTrailersAfterCommit(t *testing.T) {
+	body := strings.Repeat("trailer ", 24)
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/trailers", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Add("Trailer", "X-Trace")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+		w.Header().Set("X-Trace", "done")
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/trailers", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+	result := res.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, result.StatusCode, http.StatusOK)
+	}
+	if got := result.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want %q", request.Method, request.URL.Path, got, "gzip")
+	}
+	if got := result.Trailer.Get("X-Trace"); got != "done" {
+		t.Errorf("App.ServeHTTP(%s %s) trailer X-Trace = %q, want %q", request.Method, request.URL.Path, got, "done")
+	}
+	if got := readGzipBody(t, res.Body.Bytes()); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) decompressed body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
 func TestCompressStaticFileRangeRequest(t *testing.T) {
 	body := strings.Repeat("body { color: black; }\n", 16)
 	staticRoot := t.TempDir()
@@ -581,6 +620,41 @@ func TestCompressSkipsAlreadyEncodedResponses(t *testing.T) {
 	}
 }
 
+func TestCompressForwardsSwitchingProtocolsBeforeHijack(t *testing.T) {
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/upgrade", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Connection", "Upgrade")
+		w.Header().Set("Upgrade", "websocket")
+		w.WriteHeader(http.StatusSwitchingProtocols)
+
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Errorf("req.ResponseWriter() does not implement http.Hijacker")
+			return nil
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/upgrade", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := newSwitchingProtocolRecorder(t)
+
+	app.ServeHTTP(res, request)
+
+	if !res.hijacked {
+		t.Fatalf("App.ServeHTTP(%s %s) hijacked = false, want true", request.Method, request.URL.Path)
+	}
+	if !res.sawSwitchingProtocolsAtHijack {
+		t.Errorf("App.ServeHTTP(%s %s) did not forward 101 before Hijack", request.Method, request.URL.Path)
+	}
+}
+
 func readGzipBody(t testing.TB, body []byte) string {
 	t.Helper()
 
@@ -609,6 +683,27 @@ func newReadFromRecorder() *readFromRecorder {
 func (r *readFromRecorder) ReadFrom(src io.Reader) (int64, error) {
 	r.readFromCalled = true
 	return io.Copy(r.ResponseRecorder, src)
+}
+
+type switchingProtocolRecorder struct {
+	*hijackRecorder
+	sawSwitchingProtocolsAtHijack bool
+}
+
+func newSwitchingProtocolRecorder(t *testing.T) *switchingProtocolRecorder {
+	t.Helper()
+
+	return &switchingProtocolRecorder{hijackRecorder: newHijackRecorder(t)}
+}
+
+func (r *switchingProtocolRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	for _, status := range r.informational {
+		if status == http.StatusSwitchingProtocols {
+			r.sawSwitchingProtocolsAtHijack = true
+			break
+		}
+	}
+	return r.hijackRecorder.Hijack()
 }
 
 func hasVary(header http.Header, want string) bool {

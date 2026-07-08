@@ -175,6 +175,14 @@ func (s *compressResponseState) WriteHeader(status int) {
 	if s.wroteHeader {
 		return
 	}
+	if status == http.StatusSwitchingProtocols {
+		s.status = status
+		s.wroteHeader = true
+		s.explicitHeader = true
+		s.committed = true
+		s.writeHeaderFunc(status)
+		return
+	}
 	s.status = status
 	s.wroteHeader = true
 	s.explicitHeader = true
@@ -385,6 +393,9 @@ func (s *compressResponseState) sniffContentType(body []byte) {
 }
 
 func (s *compressResponseState) Header() http.Header {
+	if s.committed {
+		return s.response.Header()
+	}
 	if s.headerSnapshot != nil {
 		return s.headerSnapshot
 	}
