@@ -146,6 +146,51 @@ func TestCompressSkipsRangeResponses(t *testing.T) {
 	}
 }
 
+func TestCompressFreezesHeadersAtWriteHeader(t *testing.T) {
+	body := strings.Repeat("frozen ", 24)
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/freeze", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Early", "yes")
+		w.WriteHeader(http.StatusAccepted)
+		w.Header().Set("Content-Encoding", "br")
+		w.Header().Set("X-Late", "no")
+		_, _ = w.Write([]byte(body))
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/freeze", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+	result := res.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != http.StatusAccepted {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, result.StatusCode, http.StatusAccepted)
+	}
+	if got := result.Header.Get("X-Early"); got != "yes" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Early = %q, want %q", request.Method, request.URL.Path, got, "yes")
+	}
+	if got := result.Header.Get("X-Late"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) X-Late = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if got := result.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want %q", request.Method, request.URL.Path, got, "gzip")
+	}
+	if got := result.Header.Get("Content-Length"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if got := readGzipBody(t, res.Body.Bytes()); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) decompressed body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
 func TestCompressStaticFileRangeRequest(t *testing.T) {
 	body := strings.Repeat("body { color: black; }\n", 16)
 	staticRoot := t.TempDir()

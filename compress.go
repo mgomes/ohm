@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -114,6 +115,7 @@ type compressResponseState struct {
 	status         int
 	wroteHeader    bool
 	explicitHeader bool
+	headerSnapshot http.Header
 	committed      bool
 	compressing    bool
 	gzipWriter     *gzip.Writer
@@ -166,6 +168,7 @@ func (s *compressResponseState) WriteHeader(status int) {
 	s.status = status
 	s.wroteHeader = true
 	s.explicitHeader = true
+	s.freezeHeader()
 }
 
 func (s *compressResponseState) Write(body []byte) (int, error) {
@@ -253,7 +256,7 @@ func (s *compressResponseState) commitCompressed() error {
 		return nil
 	}
 
-	header := s.response.Header()
+	header := s.Header()
 	addVary(header, "Accept-Encoding")
 	header.Set("Content-Encoding", gzipEncoding)
 	header.Del("Content-Length")
@@ -266,6 +269,7 @@ func (s *compressResponseState) commitCompressed() error {
 	s.gzipWriter = writer
 	s.compressing = true
 	s.committed = true
+	s.restoreHeader(header)
 	s.writeHeaderFunc(s.status)
 	return nil
 }
@@ -275,8 +279,9 @@ func (s *compressResponseState) commitUncompressed(forceHeader bool) {
 		return
 	}
 	if s.shouldVary() {
-		addVary(s.response.Header(), "Accept-Encoding")
+		addVary(s.Header(), "Accept-Encoding")
 	}
+	s.restoreHeader(s.Header())
 	s.committed = true
 	if forceHeader {
 		s.writeHeaderFunc(s.status)
@@ -306,7 +311,7 @@ func (s *compressResponseState) shouldVary() bool {
 	if !statusAllowsResponseBody(s.status) {
 		return false
 	}
-	header := s.response.Header()
+	header := s.Header()
 	if header.Get("Content-Encoding") != "" {
 		return false
 	}
@@ -314,7 +319,7 @@ func (s *compressResponseState) shouldVary() bool {
 }
 
 func (s *compressResponseState) sniffContentType(body []byte) {
-	header := s.response.Header()
+	header := s.Header()
 	if _, ok := header["Content-Type"]; ok {
 		return
 	}
@@ -322,6 +327,31 @@ func (s *compressResponseState) sniffContentType(body []byte) {
 		return
 	}
 	header.Set("Content-Type", http.DetectContentType(body))
+}
+
+func (s *compressResponseState) Header() http.Header {
+	if s.headerSnapshot != nil {
+		return s.headerSnapshot
+	}
+	return s.response.Header()
+}
+
+func (s *compressResponseState) freezeHeader() {
+	if s.headerSnapshot != nil {
+		return
+	}
+	s.headerSnapshot = s.response.Header().Clone()
+}
+
+func (s *compressResponseState) restoreHeader(header http.Header) {
+	if s.headerSnapshot == nil {
+		return
+	}
+	live := s.response.Header()
+	clear(live)
+	for name, values := range header {
+		live[name] = slices.Clone(values)
+	}
 }
 
 type compressBodyWriter struct {
