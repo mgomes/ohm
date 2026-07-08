@@ -20,6 +20,7 @@ var defaultCompressibleContentTypes = []string{
 	"text/css",
 	"text/plain",
 	"text/javascript",
+	"text/xml",
 	"application/javascript",
 	"application/x-javascript",
 	"application/json",
@@ -141,8 +142,10 @@ func (s *compressResponseState) wrap(w http.ResponseWriter) http.ResponseWriter 
 			s.writeFunc = next
 			return s.Write
 		},
-		ReadFrom: func(httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
-			return s.ReadFrom
+		ReadFrom: func(next httpsnoop.ReadFromFunc) httpsnoop.ReadFromFunc {
+			return func(src io.Reader) (int64, error) {
+				return s.ReadFrom(next, src)
+			}
 		},
 		Flush: func(next httpsnoop.FlushFunc) httpsnoop.FlushFunc {
 			return func() {
@@ -197,7 +200,11 @@ func (s *compressResponseState) Write(body []byte) (int, error) {
 	return s.writeFunc(body)
 }
 
-func (s *compressResponseState) ReadFrom(src io.Reader) (int64, error) {
+func (s *compressResponseState) ReadFrom(next httpsnoop.ReadFromFunc, src io.Reader) (int64, error) {
+	if next != nil && s.canDelegateReadFrom() {
+		s.commitUncompressed(s.explicitHeader || s.status != http.StatusOK)
+		return next(src)
+	}
 	return io.Copy(compressBodyWriter{state: s}, src)
 }
 
@@ -296,6 +303,33 @@ func (s *compressResponseState) shouldCompress() bool {
 		return false
 	}
 	return acceptsGzip(s.request.Header.Get("Accept-Encoding"))
+}
+
+func (s *compressResponseState) canDelegateReadFrom() bool {
+	if s.committed {
+		return !s.compressing && statusAllowsResponseBody(s.status)
+	}
+	if !statusAllowsResponseBody(s.status) {
+		return false
+	}
+	if s.request == nil {
+		return true
+	}
+	if s.request.Header.Get("Range") != "" {
+		return true
+	}
+
+	header := s.Header()
+	if header.Get("Content-Encoding") != "" || header.Get("Transfer-Encoding") != "" {
+		return true
+	}
+	if _, ok := header["Content-Type"]; !ok {
+		return false
+	}
+	if !s.config.allows(header.Get("Content-Type")) {
+		return true
+	}
+	return !acceptsGzip(s.request.Header.Get("Accept-Encoding"))
 }
 
 func (s *compressResponseState) shouldVary() bool {

@@ -108,6 +108,35 @@ func TestCompressAcceptsWildcardEncoding(t *testing.T) {
 	}
 }
 
+func TestCompressGzipsTextXMLResponse(t *testing.T) {
+	body := "<root><message>hello</message></root>"
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/xml", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+		_, _ = w.Write([]byte(body))
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/xml", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want %q", request.Method, request.URL.Path, got, "gzip")
+	}
+	if got := readGzipBody(t, res.Body.Bytes()); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) decompressed body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
 func TestCompressSkipsRangeResponses(t *testing.T) {
 	body := "part"
 
@@ -143,6 +172,77 @@ func TestCompressSkipsRangeResponses(t *testing.T) {
 	}
 	if got := res.Body.String(); got != body {
 		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
+func TestCompressDelegatesReadFromWhenGzipIsNotAccepted(t *testing.T) {
+	body := strings.Repeat("delegate ", 32)
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/delegate", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, err := io.Copy(w, io.LimitReader(strings.NewReader(body), int64(len(body))))
+		return err
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/delegate", nil)
+	request.Header.Set("Accept-Encoding", "br")
+	res := newReadFromRecorder()
+
+	app.ServeHTTP(res, request)
+	result := res.Result()
+	defer result.Body.Close()
+
+	if !res.readFromCalled {
+		t.Fatalf("App.ServeHTTP(%s %s) did not delegate to the underlying ReaderFrom", request.Method, request.URL.Path)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, result.StatusCode, http.StatusOK)
+	}
+	if got := result.Header.Get("Content-Encoding"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if !hasVary(result.Header, "Accept-Encoding") {
+		t.Errorf("App.ServeHTTP(%s %s) Vary = %v, want Accept-Encoding", request.Method, request.URL.Path, result.Header.Values("Vary"))
+	}
+	if got := res.Body.String(); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
+func TestCompressDoesNotDelegateReadFromWhenCompressing(t *testing.T) {
+	body := strings.Repeat("compress ", 32)
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/compress", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, err := io.Copy(w, io.LimitReader(strings.NewReader(body), int64(len(body))))
+		return err
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/compress", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := newReadFromRecorder()
+
+	app.ServeHTTP(res, request)
+	result := res.Result()
+	defer result.Body.Close()
+
+	if res.readFromCalled {
+		t.Fatalf("App.ServeHTTP(%s %s) delegated to the underlying ReaderFrom while compressing", request.Method, request.URL.Path)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, result.StatusCode, http.StatusOK)
+	}
+	if got := result.Header.Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want %q", request.Method, request.URL.Path, got, "gzip")
+	}
+	if got := readGzipBody(t, res.Body.Bytes()); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) decompressed body = %q, want %q", request.Method, request.URL.Path, got, body)
 	}
 }
 
@@ -318,6 +418,20 @@ func readGzipBody(t testing.TB, body []byte) string {
 		t.Fatalf("io.ReadAll(gzip response body) error = %v, want nil", err)
 	}
 	return string(decoded)
+}
+
+type readFromRecorder struct {
+	*httptest.ResponseRecorder
+	readFromCalled bool
+}
+
+func newReadFromRecorder() *readFromRecorder {
+	return &readFromRecorder{ResponseRecorder: httptest.NewRecorder()}
+}
+
+func (r *readFromRecorder) ReadFrom(src io.Reader) (int64, error) {
+	r.readFromCalled = true
+	return io.Copy(r.ResponseRecorder, src)
 }
 
 func hasVary(header http.Header, want string) bool {
