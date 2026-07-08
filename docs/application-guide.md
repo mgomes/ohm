@@ -71,6 +71,18 @@ Register routes in `internal/handlers/routes.go`.
 
 Do not put long workflows in handlers. Put those in `internal/services`.
 
+## Middleware
+
+Register middleware before routes.
+
+```go
+application.Use(ohm.Compress(5))
+```
+
+`ohm.Compress` negotiates `Accept-Encoding: gzip` for common text, JSON, XML,
+JavaScript, and SVG responses. It leaves range requests, bodyless statuses, and
+responses that already set `Content-Encoding` uncompressed.
+
 ## Views
 
 Ohm uses the standard library `html/template` package for server-rendered HTML.
