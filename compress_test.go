@@ -507,6 +507,47 @@ func TestCompressAllowsTrailersAfterCommit(t *testing.T) {
 	}
 }
 
+func TestCompressPreservesTrailersSetBeforeCommit(t *testing.T) {
+	body := "plain trailer body"
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/trailers", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Add("Trailer", "X-Trace")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("X-Trace", "declared")
+		w.Header().Set(http.TrailerPrefix+"X-Prefix", "prefixed")
+		_, _ = w.Write([]byte(body))
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/trailers", nil)
+	request.Header.Set("Accept-Encoding", "br")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+	result := res.Result()
+	defer result.Body.Close()
+
+	if result.StatusCode != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, result.StatusCode, http.StatusOK)
+	}
+	if got := result.Header.Get("Content-Encoding"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if got := result.Trailer.Get("X-Trace"); got != "declared" {
+		t.Errorf("App.ServeHTTP(%s %s) trailer X-Trace = %q, want %q", request.Method, request.URL.Path, got, "declared")
+	}
+	if got := result.Trailer.Get("X-Prefix"); got != "prefixed" {
+		t.Errorf("App.ServeHTTP(%s %s) trailer X-Prefix = %q, want %q", request.Method, request.URL.Path, got, "prefixed")
+	}
+	if got := res.Body.String(); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
 func TestCompressStaticFileRangeRequest(t *testing.T) {
 	body := strings.Repeat("body { color: black; }\n", 16)
 	staticRoot := t.TempDir()

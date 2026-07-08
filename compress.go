@@ -414,10 +414,35 @@ func (s *compressResponseState) restoreHeader(header http.Header) {
 		return
 	}
 	live := s.response.Header()
+	trailers := liveTrailerValues(header, live)
 	clear(live)
 	for name, values := range header {
 		live[name] = slices.Clone(values)
 	}
+	for name, values := range trailers {
+		live[name] = values
+	}
+}
+
+func liveTrailerValues(header, live http.Header) http.Header {
+	trailers := make(http.Header)
+	for _, value := range header.Values("Trailer") {
+		for part := range strings.SplitSeq(value, ",") {
+			name := http.CanonicalHeaderKey(strings.TrimSpace(part))
+			if name == "" {
+				continue
+			}
+			if values, ok := live[name]; ok {
+				trailers[name] = slices.Clone(values)
+			}
+		}
+	}
+	for name, values := range live {
+		if strings.HasPrefix(name, http.TrailerPrefix) {
+			trailers[name] = slices.Clone(values)
+		}
+	}
+	return trailers
 }
 
 type compressBodyWriter struct {
