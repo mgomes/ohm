@@ -271,6 +271,87 @@ func TestCompressSkipsRangeResponses(t *testing.T) {
 	}
 }
 
+func TestCompressSkipsPartialContentWithoutRangeRequest(t *testing.T) {
+	body := "part"
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/partial", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte(body))
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/partial", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusPartialContent {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusPartialContent)
+	}
+	if got := res.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if got := res.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Errorf("App.ServeHTTP(%s %s) Accept-Ranges = %q, want %q", request.Method, request.URL.Path, got, "bytes")
+	}
+	if got := res.Header().Get("Content-Length"); got != strconv.Itoa(len(body)) {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, strconv.Itoa(len(body)))
+	}
+	if hasVary(res.Header(), "Accept-Encoding") {
+		t.Errorf("App.ServeHTTP(%s %s) Vary = %v, want no Accept-Encoding", request.Method, request.URL.Path, res.Header().Values("Vary"))
+	}
+	if got := res.Body.String(); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
+func TestCompressSkipsContentRangeWithoutRangeRequest(t *testing.T) {
+	body := "part"
+
+	app := New()
+	app.Use(Compress(5))
+	app.Get("/content-range", func(req *Request) error {
+		w := req.ResponseWriter()
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.Header().Set("Content-Range", "bytes 0-3/10")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(body))
+		return nil
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/content-range", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	res := httptest.NewRecorder()
+
+	app.ServeHTTP(res, request)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("App.ServeHTTP(%s %s) status = %d, want %d", request.Method, request.URL.Path, res.Code, http.StatusOK)
+	}
+	if got := res.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Encoding = %q, want empty", request.Method, request.URL.Path, got)
+	}
+	if got := res.Header().Get("Content-Range"); got != "bytes 0-3/10" {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Range = %q, want %q", request.Method, request.URL.Path, got, "bytes 0-3/10")
+	}
+	if got := res.Header().Get("Content-Length"); got != strconv.Itoa(len(body)) {
+		t.Errorf("App.ServeHTTP(%s %s) Content-Length = %q, want %q", request.Method, request.URL.Path, got, strconv.Itoa(len(body)))
+	}
+	if hasVary(res.Header(), "Accept-Encoding") {
+		t.Errorf("App.ServeHTTP(%s %s) Vary = %v, want no Accept-Encoding", request.Method, request.URL.Path, res.Header().Values("Vary"))
+	}
+	if got := res.Body.String(); got != body {
+		t.Errorf("App.ServeHTTP(%s %s) body = %q, want %q", request.Method, request.URL.Path, got, body)
+	}
+}
+
 func TestCompressDelegatesReadFromWhenGzipIsNotAccepted(t *testing.T) {
 	body := strings.Repeat("delegate ", 32)
 

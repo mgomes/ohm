@@ -326,11 +326,14 @@ func (s *compressResponseState) canDelegateReadFrom() bool {
 	if s.request == nil {
 		return true
 	}
+	header := s.Header()
 	if s.request.Header.Get("Range") != "" {
 		return true
 	}
+	if partialResponse(s.status, header) {
+		return true
+	}
 
-	header := s.Header()
 	if header.Get("Content-Encoding") != "" || header.Get("Transfer-Encoding") != "" {
 		return true
 	}
@@ -350,17 +353,24 @@ func (s *compressResponseState) shouldVary() bool {
 	if s.request == nil {
 		return false
 	}
+	header := s.Header()
 	if s.request.Header.Get("Range") != "" {
+		return false
+	}
+	if partialResponse(s.status, header) {
 		return false
 	}
 	if !statusAllowsResponseBody(s.status) {
 		return false
 	}
-	header := s.Header()
 	if header.Get("Content-Encoding") != "" {
 		return false
 	}
 	return s.config.allows(header.Get("Content-Type"))
+}
+
+func partialResponse(status int, header http.Header) bool {
+	return status == http.StatusPartialContent || header.Get("Content-Range") != ""
 }
 
 func (s *compressResponseState) sniffContentType(body []byte) {
