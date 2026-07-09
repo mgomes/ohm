@@ -2,6 +2,8 @@ module github.com/mgomes/ohm
 
 go 1.25.0
 
+toolchain go1.26.5
+
 require (
 	github.com/felixge/httpsnoop v1.1.0
 	github.com/go-chi/chi/v5 v5.3.0
