@@ -206,15 +206,24 @@ func Select(r *http.Request, view ohm.HTMLView, opts ...Option) (ohm.HTML, error
 		return view.Full(), nil
 	}
 
-	if target := request.TargetID(); target != "" {
-		fragment, found, err := targetFragment(view, target)
-		if err != nil {
-			return nil, err
+	if target := request.Target(); target != "" {
+		// Match the header verbatim first, then the id parsed out of it. An id
+		// may legally contain "#", which htmx 2 sends raw and encodeURI does
+		// not escape, so "invoice#draft" is ambiguous: it is a whole htmx 2 id
+		// and also parses to the htmx 4 id "draft". Trying the raw value first
+		// keeps htmx 2 exact and prevents rendering an unrelated "draft"
+		// fragment, while htmx 4's "section#invoice" still resolves on the
+		// second attempt.
+		for _, candidate := range targetCandidates(request) {
+			fragment, found, err := targetFragment(view, candidate)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				return fragment.HTML(), nil
+			}
 		}
-		if !found {
-			return nil, unknownTargetError(target, view.Targets())
-		}
-		return fragment.HTML(), nil
+		return nil, unknownTargetError(target, view.Targets())
 	}
 
 	if options.singleFragmentFallback {
@@ -317,6 +326,16 @@ func unknownTargetError(target string, knownTargets []string) error {
 		Target:       target,
 		KnownTargets: knownTargets,
 	})
+}
+
+// targetCandidates returns the fragment targets to try for r, most exact
+// first: the header verbatim, then the id parsed out of it when they differ.
+func targetCandidates(r Request) []string {
+	target := r.Target()
+	if id := r.TargetID(); id != target && id != "" {
+		return []string{target, id}
+	}
+	return []string{target}
 }
 
 // targetElementID extracts the element id from an HX-Target value. See

@@ -112,6 +112,55 @@ func TestRenderUsesFragmentForHTMXTargetFormats(t *testing.T) {
 	}
 }
 
+// An id may legally contain "#". htmx 2 sends such an id raw, and encodeURI
+// does not escape "#", so "invoice#draft" is both a whole htmx 2 id and a value
+// that parses to the htmx 4 id "draft". The raw header must win, or a request
+// for "invoice#draft" renders the unrelated "draft" fragment.
+func TestRenderPrefersRawTargetForIDContainingHash(t *testing.T) {
+	app := newViewApp(t, ohm.View(
+		testComponent("full"),
+		ohm.Fragment("invoice#draft", testComponent("invoice fragment")),
+		ohm.Fragment("draft", testComponent("draft fragment")),
+	))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "invoice#draft")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("HX-Target %q status = %d, want %d (%s)", "invoice#draft", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Body.String(); got != "invoice fragment" {
+		t.Errorf("HX-Target %q body = %q, want %q", "invoice#draft", got, "invoice fragment")
+	}
+}
+
+// With no fragment matching the raw header, the parsed id is tried next, so an
+// htmx 4 target still resolves.
+func TestRenderFallsBackToParsedIDWhenRawTargetDoesNotMatch(t *testing.T) {
+	app := newViewApp(t, ohm.View(
+		testComponent("full"),
+		ohm.Fragment("draft", testComponent("draft fragment")),
+	))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "section#draft")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("HX-Target %q status = %d, want %d (%s)", "section#draft", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Body.String(); got != "draft fragment" {
+		t.Errorf("HX-Target %q body = %q, want %q", "section#draft", got, "draft fragment")
+	}
+}
+
 // An htmx 4 target for an element with no id carries only a tag name. It
 // addresses no fragment and must not silently match one.
 func TestRenderRejectsHTMXTargetWithoutID(t *testing.T) {
