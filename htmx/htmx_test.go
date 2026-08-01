@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,6 +72,224 @@ func TestRenderUsesFragmentForMatchingTarget(t *testing.T) {
 	}
 	if got := response.Body.String(); got != "fragment" {
 		t.Errorf("htmx.Render(targeted request) body = %q, want %q", got, "fragment")
+	}
+}
+
+// htmx 4 builds HX-Target from the tag name plus, when the element has one,
+// "#" and the encodeURI'd id. So an element htmx 2 reported as "posts" arrives
+// as "section#posts". Both forms must resolve to the same fragment.
+func TestRenderUsesFragmentForHTMXTargetFormats(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		target         string
+		fragmentTarget string
+	}{
+		{name: "htmx 2 bare id", target: "posts", fragmentTarget: "posts"},
+		{name: "htmx 4 tag and id", target: "section#posts", fragmentTarget: "posts"},
+		{name: "id selector", target: "#posts", fragmentTarget: "posts"},
+		{name: "percent encoded id", target: "section#po%20sts", fragmentTarget: "po sts"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := newViewApp(t, ohm.View(
+				testComponent("full"),
+				ohm.Fragment(test.fragmentTarget, testComponent("fragment")),
+			))
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			request.Header.Set(htmx.HeaderRequest, "true")
+			request.Header.Set(htmx.HeaderTarget, test.target)
+
+			app.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("HX-Target %q status = %d, want %d (%s)", test.target, response.Code, http.StatusOK, response.Body.String())
+			}
+			if got := response.Body.String(); got != "fragment" {
+				t.Errorf("HX-Target %q body = %q, want %q", test.target, got, "fragment")
+			}
+		})
+	}
+}
+
+// An id may legally contain "#". htmx 2 sends such an id raw, and encodeURI
+// does not escape "#", so "invoice#draft" is both a whole htmx 2 id and a value
+// that parses to the htmx 4 id "draft". With no "draft" fragment declared, the
+// raw header resolves and htmx 2 stays exact for any id.
+func TestRenderMatchesRawTargetForIDContainingHash(t *testing.T) {
+	app := newViewApp(t, ohm.View(
+		testComponent("full"),
+		ohm.Fragment("invoice#draft", testComponent("invoice fragment")),
+	))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "invoice#draft")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("HX-Target %q status = %d, want %d (%s)", "invoice#draft", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Body.String(); got != "invoice fragment" {
+		t.Errorf("HX-Target %q body = %q, want %q", "invoice#draft", got, "invoice fragment")
+	}
+}
+
+// When the raw header and the parsed id match two different fragments, the
+// right one depends on which htmx version sent the header, and the server
+// cannot see that. Silently picking either misroutes the other version, so the
+// conflict is an error.
+func TestRenderRejectsAmbiguousTarget(t *testing.T) {
+	app := newViewApp(t, ohm.View(
+		testComponent("full"),
+		ohm.Fragment("invoice#draft", testComponent("invoice fragment")),
+		ohm.Fragment("draft", testComponent("draft fragment")),
+	))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "invoice#draft")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("HX-Target %q status = %d, want %d (%s)", "invoice#draft", response.Code, http.StatusInternalServerError, response.Body.String())
+	}
+}
+
+// With no fragment matching the raw header, the parsed id is tried next, so an
+// htmx 4 target still resolves.
+func TestRenderFallsBackToParsedIDWhenRawTargetDoesNotMatch(t *testing.T) {
+	app := newViewApp(t, ohm.View(
+		testComponent("full"),
+		ohm.Fragment("draft", testComponent("draft fragment")),
+	))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "section#draft")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("HX-Target %q status = %d, want %d (%s)", "section#draft", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Body.String(); got != "draft fragment" {
+		t.Errorf("HX-Target %q body = %q, want %q", "section#draft", got, "draft fragment")
+	}
+}
+
+// An htmx 4 target for an element with no id carries only a tag name. Unless a
+// fragment is explicitly named like that tag, it matches nothing and is
+// rejected as an unknown target.
+func TestRenderRejectsHTMXTargetWithoutID(t *testing.T) {
+	app := ohm.New(ohm.WithErrorHandler(func(req *ohm.Request, err error) {
+		status, message := ohm.ErrorResponse(err)
+		req.PlainText(status, message)
+	}))
+	app.Get("/", func(req *ohm.Request) error {
+		return htmx.Render(req, http.StatusOK, ohm.View(
+			testComponent("full"),
+			ohm.Fragment("posts", testComponent("fragment")),
+		))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "section")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("HX-Target %q status = %d, want %d", "section", response.Code, http.StatusBadRequest)
+	}
+}
+
+// A bare HX-Target like "section" is indistinguishable from an htmx 2 element
+// id, so a fragment explicitly named that way still matches. This pins the
+// htmx 2 reading winning over rejecting htmx 4's tag-only form; fragment
+// targets should be element ids.
+func TestRenderMatchesFragmentNamedLikeTag(t *testing.T) {
+	app := newViewApp(t, ohm.View(
+		testComponent("full"),
+		ohm.Fragment("section", testComponent("section fragment")),
+	))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "section")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("HX-Target %q status = %d, want %d (%s)", "section", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Body.String(); got != "section fragment" {
+		t.Errorf("HX-Target %q body = %q, want %q", "section", got, "section fragment")
+	}
+}
+
+func TestParseRequestTargetID(t *testing.T) {
+	for _, test := range []struct {
+		target string
+		wantID string
+	}{
+		{target: "", wantID: ""},
+		{target: "posts", wantID: "posts"},             // htmx 2
+		{target: "section#posts", wantID: "posts"},     // htmx 4
+		{target: "div#posts", wantID: "posts"},         // htmx 4
+		{target: "#posts", wantID: "posts"},            // id selector
+		{target: "section", wantID: "section"},         // htmx 4, element has no id
+		{target: "section#po%20sts", wantID: "po sts"}, // encodeURI escapes spaces
+		{target: "section#a#b", wantID: "a#b"},         // encodeURI leaves "#" alone
+	} {
+		t.Run(test.target, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			if test.target != "" {
+				request.Header.Set(htmx.HeaderTarget, test.target)
+			}
+
+			parsed := htmx.ParseRequest(request)
+			if got := parsed.TargetID(); got != test.wantID {
+				t.Errorf("ParseRequest(HX-Target: %q).TargetID() = %q, want %q", test.target, got, test.wantID)
+			}
+			if got := parsed.Target(); got != test.target {
+				t.Errorf("ParseRequest(HX-Target: %q).Target() = %q, want the header verbatim", test.target, got)
+			}
+		})
+	}
+}
+
+func TestRequestTargetCandidates(t *testing.T) {
+	for _, test := range []struct {
+		target string
+		want   []string
+	}{
+		{target: "", want: nil},
+		{target: "posts", want: []string{"posts"}},                                 // htmx 2
+		{target: "section", want: []string{"section"}},                             // htmx 4, element has no id
+		{target: "#posts", want: []string{"#posts", "posts"}},                      // id selector
+		{target: "section#posts", want: []string{"section#posts", "posts"}},        // htmx 4
+		{target: "invoice#draft", want: []string{"invoice#draft", "draft"}},        // whole htmx 2 id or htmx 4 pair
+		{target: "section#po%20sts", want: []string{"section#po%20sts", "po sts"}}, // encodeURI escapes spaces
+	} {
+		t.Run(test.target, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			if test.target != "" {
+				request.Header.Set(htmx.HeaderTarget, test.target)
+			}
+
+			parsed := htmx.ParseRequest(request)
+			if got := parsed.TargetCandidates(); !slices.Equal(got, test.want) {
+				t.Errorf("ParseRequest(HX-Target: %q).TargetCandidates() = %q, want %q", test.target, got, test.want)
+			}
+		})
 	}
 }
 
