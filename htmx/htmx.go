@@ -207,23 +207,33 @@ func Select(r *http.Request, view ohm.HTMLView, opts ...Option) (ohm.HTML, error
 	}
 
 	if target := request.Target(); target != "" {
-		// Match the header verbatim first, then the id parsed out of it. An id
-		// may legally contain "#", which htmx 2 sends raw and encodeURI does
-		// not escape, so "invoice#draft" is ambiguous: it is a whole htmx 2 id
-		// and also parses to the htmx 4 id "draft". Trying the raw value first
-		// keeps htmx 2 exact and prevents rendering an unrelated "draft"
-		// fragment, while htmx 4's "section#invoice" still resolves on the
-		// second attempt.
+		// Try the header verbatim and the id parsed out of it. An id may
+		// legally contain "#", which htmx 2 sends raw and encodeURI does not
+		// escape, so "invoice#draft" is a whole htmx 2 id and also parses to
+		// the htmx 4 id "draft". When both readings resolve, only the htmx
+		// version that sent the header could break the tie, and the server
+		// cannot see it — so a double match is reported as a fragment-naming
+		// conflict rather than silently misrouting one version.
+		var match ohm.HTMLFragment
+		var matched string
+		var found bool
 		for _, candidate := range targetCandidates(request) {
-			fragment, found, err := targetFragment(view, candidate)
+			fragment, ok, err := targetFragment(view, candidate)
 			if err != nil {
 				return nil, err
 			}
-			if found {
-				return fragment.HTML(), nil
+			if !ok {
+				continue
 			}
+			if found {
+				return nil, fmt.Errorf("htmx target %q is ambiguous: fragments %q and %q both match", target, matched, candidate)
+			}
+			match, matched, found = fragment, candidate, true
 		}
-		return nil, unknownTargetError(target, view.Targets())
+		if !found {
+			return nil, unknownTargetError(target, view.Targets())
+		}
+		return match.HTML(), nil
 	}
 
 	if options.singleFragmentFallback {
