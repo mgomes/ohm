@@ -154,9 +154,11 @@ func (r Request) Target() string {
 // so "section#posts" for an element with an id, and "section" for one without.
 // TargetID returns "posts" for all of "posts", "#posts", and "section#posts".
 //
-// A value carrying no "#" is returned unchanged. That preserves htmx 2 ids and
-// leaves htmx 4's tag-only identifiers to fail fragment matching, which is the
-// correct outcome: an element with no id addresses no fragment.
+// A value carrying no "#" is returned unchanged: a bare value may be an htmx 2
+// id or the tag name htmx 4 sends for an element with no id, and the two
+// cannot be told apart. A fragment named like a bare tag name therefore
+// matches an id-less htmx 4 element as well — keep fragment targets element
+// ids to stay unambiguous.
 func (r Request) TargetID() string {
 	return r.targetID
 }

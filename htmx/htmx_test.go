@@ -74,10 +74,9 @@ func TestRenderUsesFragmentForMatchingTarget(t *testing.T) {
 	}
 }
 
-// htmx 4 builds HX-Target as
-// `${elt.tagName.toLowerCase()}${elt.id ? '#' + encodeURI(elt.id) : ”}`, so an
-// element htmx 2 reported as "posts" arrives as "section#posts". Both forms
-// must resolve to the same fragment.
+// htmx 4 builds HX-Target from the tag name plus, when the element has one,
+// "#" and the encodeURI'd id. So an element htmx 2 reported as "posts" arrives
+// as "section#posts". Both forms must resolve to the same fragment.
 func TestRenderUsesFragmentForHTMXTargetFormats(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -183,8 +182,9 @@ func TestRenderFallsBackToParsedIDWhenRawTargetDoesNotMatch(t *testing.T) {
 	}
 }
 
-// An htmx 4 target for an element with no id carries only a tag name. It
-// addresses no fragment and must not silently match one.
+// An htmx 4 target for an element with no id carries only a tag name. Unless a
+// fragment is explicitly named like that tag, it matches nothing and is
+// rejected as an unknown target.
 func TestRenderRejectsHTMXTargetWithoutID(t *testing.T) {
 	app := ohm.New(ohm.WithErrorHandler(func(req *ohm.Request, err error) {
 		status, message := ohm.ErrorResponse(err)
