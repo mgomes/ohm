@@ -209,6 +209,31 @@ func TestRenderRejectsHTMXTargetWithoutID(t *testing.T) {
 	}
 }
 
+// A bare HX-Target like "section" is indistinguishable from an htmx 2 element
+// id, so a fragment explicitly named that way still matches. This pins the
+// htmx 2 reading winning over rejecting htmx 4's tag-only form; fragment
+// targets should be element ids.
+func TestRenderMatchesFragmentNamedLikeTag(t *testing.T) {
+	app := newViewApp(t, ohm.View(
+		testComponent("full"),
+		ohm.Fragment("section", testComponent("section fragment")),
+	))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(htmx.HeaderRequest, "true")
+	request.Header.Set(htmx.HeaderTarget, "section")
+
+	app.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("HX-Target %q status = %d, want %d (%s)", "section", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Body.String(); got != "section fragment" {
+		t.Errorf("HX-Target %q body = %q, want %q", "section", got, "section fragment")
+	}
+}
+
 func TestParseRequestTargetID(t *testing.T) {
 	for _, test := range []struct {
 		target string
