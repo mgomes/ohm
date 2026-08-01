@@ -24,7 +24,8 @@ const (
 	HeaderRequest = "HX-Request"
 	// HeaderTarget identifies the target element. htmx 2 sends the element id;
 	// htmx 4 sends a CSS identifier built from the tag name and id, such as
-	// "section#posts". Request.TargetID reads the id from either form.
+	// "section#posts". Request.TargetCandidates lists both readings for
+	// matching; Request.TargetID reads the id out of either form.
 	HeaderTarget = "HX-Target"
 	// HeaderTrigger carries the triggering id on requests and events on responses.
 	HeaderTrigger = "HX-Trigger"
@@ -139,9 +140,27 @@ func (r Request) Prompt() string {
 }
 
 // Target returns the HX-Target header exactly as htmx sent it. The format
-// differs by major version; use TargetID to match against fragment targets.
+// differs by major version; use TargetCandidates to match against fragment
+// targets.
 func (r Request) Target() string {
 	return r.target
+}
+
+// TargetCandidates returns the fragment targets to try for the request, most
+// exact first: the HX-Target header verbatim, then the id parsed out of it
+// when they differ. It returns nil when htmx sent no target.
+//
+// A value containing "#" is ambiguous — it may be a whole htmx 2 id or an
+// htmx 4 tag#id pair — so match candidates in order and treat two distinct
+// matches as a conflict, as Select does.
+func (r Request) TargetCandidates() []string {
+	if r.target == "" {
+		return nil
+	}
+	if r.targetID != r.target && r.targetID != "" {
+		return []string{r.target, r.targetID}
+	}
+	return []string{r.target}
 }
 
 // TargetID returns the id of the target element, when htmx sent one.
@@ -153,6 +172,10 @@ func (r Request) Target() string {
 //
 // so "section#posts" for an element with an id, and "section" for one without.
 // TargetID returns "posts" for all of "posts", "#posts", and "section#posts".
+//
+// TargetID reads any value containing "#" as the htmx 4 form, so an htmx 2 id
+// that itself contains "#" ("invoice#draft") is reported as just "draft". Use
+// TargetCandidates when matching fragment targets; it carries both readings.
 //
 // A value carrying no "#" is returned unchanged: a bare value may be an htmx 2
 // id or the tag name htmx 4 sends for an element with no id, and the two
@@ -219,7 +242,7 @@ func Select(r *http.Request, view ohm.HTMLView, opts ...Option) (ohm.HTML, error
 		var match ohm.HTMLFragment
 		var matched string
 		var found bool
-		for _, candidate := range targetCandidates(request) {
+		for _, candidate := range request.TargetCandidates() {
 			fragment, ok, err := targetFragment(view, candidate)
 			if err != nil {
 				return nil, err
@@ -338,16 +361,6 @@ func unknownTargetError(target string, knownTargets []string) error {
 		Target:       target,
 		KnownTargets: knownTargets,
 	})
-}
-
-// targetCandidates returns the fragment targets to try for r, most exact
-// first: the header verbatim, then the id parsed out of it when they differ.
-func targetCandidates(r Request) []string {
-	target := r.Target()
-	if id := r.TargetID(); id != target && id != "" {
-		return []string{target, id}
-	}
-	return []string{target}
 }
 
 // targetElementID extracts the element id from an HX-Target value. See

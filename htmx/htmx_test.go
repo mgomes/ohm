@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -260,6 +261,33 @@ func TestParseRequestTargetID(t *testing.T) {
 			}
 			if got := parsed.Target(); got != test.target {
 				t.Errorf("ParseRequest(HX-Target: %q).Target() = %q, want the header verbatim", test.target, got)
+			}
+		})
+	}
+}
+
+func TestRequestTargetCandidates(t *testing.T) {
+	for _, test := range []struct {
+		target string
+		want   []string
+	}{
+		{target: "", want: nil},
+		{target: "posts", want: []string{"posts"}},                                 // htmx 2
+		{target: "section", want: []string{"section"}},                             // htmx 4, element has no id
+		{target: "#posts", want: []string{"#posts", "posts"}},                      // id selector
+		{target: "section#posts", want: []string{"section#posts", "posts"}},        // htmx 4
+		{target: "invoice#draft", want: []string{"invoice#draft", "draft"}},        // whole htmx 2 id or htmx 4 pair
+		{target: "section#po%20sts", want: []string{"section#po%20sts", "po sts"}}, // encodeURI escapes spaces
+	} {
+		t.Run(test.target, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			if test.target != "" {
+				request.Header.Set(htmx.HeaderTarget, test.target)
+			}
+
+			parsed := htmx.ParseRequest(request)
+			if got := parsed.TargetCandidates(); !slices.Equal(got, test.want) {
+				t.Errorf("ParseRequest(HX-Target: %q).TargetCandidates() = %q, want %q", test.target, got, test.want)
 			}
 		})
 	}
