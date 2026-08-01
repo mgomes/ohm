@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -21,7 +22,9 @@ const (
 	HeaderPrompt = "HX-Prompt"
 	// HeaderRequest identifies htmx requests.
 	HeaderRequest = "HX-Request"
-	// HeaderTarget carries the target element id when one exists.
+	// HeaderTarget identifies the target element. htmx 2 sends the element id;
+	// htmx 4 sends a CSS identifier built from the tag name and id, such as
+	// "section#posts". Request.TargetID reads the id from either form.
 	HeaderTarget = "HX-Target"
 	// HeaderTrigger carries the triggering id on requests and events on responses.
 	HeaderTrigger = "HX-Trigger"
@@ -85,6 +88,7 @@ type Request struct {
 	currentURL       string
 	prompt           string
 	target           string
+	targetID         string
 	trigger          string
 	triggerName      string
 }
@@ -95,13 +99,15 @@ func ParseRequest(r *http.Request) Request {
 		return Request{}
 	}
 	header := r.Header
+	target := header.Get(HeaderTarget)
 	return Request{
 		isRequest:        isTrue(header.Get(HeaderRequest)),
 		isBoosted:        isTrue(header.Get(HeaderBoosted)),
 		isHistoryRestore: isTrue(header.Get(HeaderHistoryRestoreRequest)),
 		currentURL:       header.Get(HeaderCurrentURL),
 		prompt:           header.Get(HeaderPrompt),
-		target:           header.Get(HeaderTarget),
+		target:           target,
+		targetID:         targetElementID(target),
 		trigger:          header.Get(HeaderTrigger),
 		triggerName:      header.Get(HeaderTriggerName),
 	}
@@ -132,9 +138,27 @@ func (r Request) Prompt() string {
 	return r.prompt
 }
 
-// Target returns the target element id, when htmx sent one.
+// Target returns the HX-Target header exactly as htmx sent it. The format
+// differs by major version; use TargetID to match against fragment targets.
 func (r Request) Target() string {
 	return r.target
+}
+
+// TargetID returns the id of the target element, when htmx sent one.
+//
+// htmx 2 sends the bare id in HX-Target ("posts"). htmx 4 sends a CSS
+// identifier it builds as
+//
+//	`${elt.tagName.toLowerCase()}${elt.id ? '#' + encodeURI(elt.id) : ''}`
+//
+// so "section#posts" for an element with an id, and "section" for one without.
+// TargetID returns "posts" for all of "posts", "#posts", and "section#posts".
+//
+// A value carrying no "#" is returned unchanged. That preserves htmx 2 ids and
+// leaves htmx 4's tag-only identifiers to fail fragment matching, which is the
+// correct outcome: an element with no id addresses no fragment.
+func (r Request) TargetID() string {
+	return r.targetID
 }
 
 // Trigger returns the triggering element id, when htmx sent one.
@@ -182,7 +206,7 @@ func Select(r *http.Request, view ohm.HTMLView, opts ...Option) (ohm.HTML, error
 		return view.Full(), nil
 	}
 
-	if target := request.Target(); target != "" {
+	if target := request.TargetID(); target != "" {
 		fragment, found, err := targetFragment(view, target)
 		if err != nil {
 			return nil, err
@@ -293,6 +317,23 @@ func unknownTargetError(target string, knownTargets []string) error {
 		Target:       target,
 		KnownTargets: knownTargets,
 	})
+}
+
+// targetElementID extracts the element id from an HX-Target value. See
+// Request.TargetID for the formats htmx sends.
+func targetElementID(target string) string {
+	hash := strings.IndexByte(target, '#')
+	if hash < 0 {
+		return target
+	}
+	id := target[hash+1:]
+	// htmx 4 passes the id through encodeURI, which escapes spaces and percent
+	// signs but leaves "#" alone — so taking everything after the first "#"
+	// also handles the pathological case of an id that contains one.
+	if decoded, err := url.PathUnescape(id); err == nil {
+		return decoded
+	}
+	return id
 }
 
 func isTrue(value string) bool {
